@@ -1,0 +1,384 @@
+/**
+ * Cloudflare GraphQL Analytics API 封装。
+ *
+ * 调用 POST /client/v4/graphql，由 client.ts 的 graphql() 注入认证头并解析 result。
+ * CF GraphQL 查询需要在 filter 里带 zoneTag（zone 维度）或 accountTag（account 维度）。
+ * 时间用 ISO8601（since/until 接受 Time 类型，如 2024-01-01T00:00:00Z）。
+ *
+ * 所有函数返回 {labels, values, summary} 形式的结构化结果，供视图直接渲染。
+ */
+import { graphql } from './client'
+
+/* ---------- 通用结构 ---------- */
+
+export interface TimePoint {
+  /** 时间标签（用于柱状图 x 轴 / tooltip） */
+  label: string
+  /** 原始时间戳 */
+  ts: string
+  requests: number
+  bytes: number
+  threats: number
+  pageViews: number
+  uniqueVisitors: number
+  cachedBytes: number
+}
+
+export interface ZoneSummary {
+  requests: number
+  pageViews: number
+  uniqueVisitors: number
+  threats: number
+  bytes: number
+  cachedBytes: number
+  cachedRequests: number
+  /** 缓存命中率（cachedBytes / bytes，bytes 为 0 时返回 0） */
+  cacheHitRate: number
+  /** 命中样本数（1d 分组条数） */
+  days: number
+}
+
+export interface CountryRow {
+  country: string
+  requests: number
+  bytes: number
+}
+
+export interface WorkerInvocationRow {
+  label: string
+  script: string
+  requests: number
+  errors: number
+  subrequests: number
+}
+
+export interface ZoneTrafficResult {
+  points: TimePoint[]
+  summary: ZoneSummary
+}
+
+export interface ZoneCountryResult {
+  rows: CountryRow[]
+  total: number
+}
+
+export interface AccountWorkersResult {
+  rows: WorkerInvocationRow[]
+  total: number
+}
+
+/* ---------- GraphQL 原始响应类型 ---------- */
+
+interface GraphQLResult<T> {
+  data: T | null
+  errors?: { code?: number; message: string }[]
+}
+
+interface RawSum {
+  requests?: number
+  bytes?: number
+  threats?: number
+  pageViews?: number
+  cachedBytes?: number
+  cachedRequests?: number
+}
+interface RawUniq {
+  uniques?: number
+}
+interface Raw1hGroup {
+  sum?: RawSum
+  uniq?: RawUniq
+  dimensions?: { dateMinute?: string; clientCountryName?: string }
+}
+interface Raw1dGroup {
+  sum?: RawSum
+  uniq?: RawUniq
+  dimensions?: { date?: string }
+}
+interface RawWorkerGroup {
+  sum?: { requests?: number; subrequests?: number; errors?: number }
+  dimensions?: { date?: string; scriptName?: string }
+}
+
+interface Zone1hResp {
+  viewer: { zones: { httpRequests1hGroups: Raw1hGroup[] }[] }
+}
+interface Zone1dResp {
+  viewer: { zones: { httpRequests1dGroups: Raw1dGroup[] }[] }
+}
+interface ZoneCountryResp {
+  viewer: { zones: { httpRequests1hGroups: Raw1hGroup[] }[] }
+}
+interface AccountWorkerResp {
+  viewer: { accounts: { workersInvocationsAdaptive: RawWorkerGroup[] }[] }
+}
+
+/* ---------- 工具函数 ---------- */
+
+function gqlErrorCheck<T>(r: GraphQLResult<T>): T {
+  if (r.errors && r.errors.length) {
+    throw new Error(r.errors.map((e) => e.message).join('; '))
+  }
+  if (!r.data) throw new Error('GraphQL 返回空 data')
+  return r.data
+}
+
+function fmtMinuteLabel(dateMinute: string): string {
+  // dateMinute 形如 2024-01-01T00:00Z 或 2024-01-01T00:00:00Z
+  const d = new Date(dateMinute.endsWith('Z') ? dateMinute : `${dateMinute}Z`)
+  if (Number.isNaN(d.getTime())) return dateMinute
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:00`
+}
+
+function fmtDayLabel(date: string): string {
+  const d = new Date(date.endsWith('Z') ? date : `${date}T00:00:00Z`)
+  if (Number.isNaN(d.getTime())) return date
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+function aggSummary(groups: { sum?: RawSum; uniq?: RawUniq }[]): ZoneSummary {
+  let requests = 0
+  let pageViews = 0
+  let uniqueVisitors = 0
+  let threats = 0
+  let bytes = 0
+  let cachedBytes = 0
+  let cachedRequests = 0
+  for (const g of groups) {
+    const s = g.sum ?? {}
+    const u = g.uniq ?? {}
+    requests += s.requests ?? 0
+    pageViews += s.pageViews ?? 0
+    uniqueVisitors += u.uniques ?? 0
+    threats += s.threats ?? 0
+    bytes += s.bytes ?? 0
+    cachedBytes += s.cachedBytes ?? 0
+    cachedRequests += s.cachedRequests ?? 0
+  }
+  return {
+    requests,
+    pageViews,
+    uniqueVisitors,
+    threats,
+    bytes,
+    cachedBytes,
+    cachedRequests,
+    cacheHitRate: bytes > 0 ? cachedBytes / bytes : 0,
+    days: groups.length,
+  }
+}
+
+/* ---------- Zone 流量（1h 分组） ---------- */
+
+/**
+ * 查询 zone 的每小时请求分组（用于趋势柱状图），同时聚合汇总数据。
+ * since/until 接受 ISO8601 字符串。
+ */
+export async function zoneTraffic(
+  zoneId: string,
+  since: string,
+  until: string,
+): Promise<ZoneTrafficResult> {
+  const query = `{
+  viewer {
+    zones(filter: {zoneTag: ${JSON.stringify(zoneId)}}) {
+      httpRequests1hGroups(
+        limit: 1000
+        since: ${JSON.stringify(since)}
+        until: ${JSON.stringify(until)}
+        orderBy: [dateMinute_ASC]
+      ) {
+        sum {
+          requests
+          bytes
+          threats
+          pageViews
+          cachedBytes
+        }
+        uniq {
+          uniques
+        }
+        dimensions {
+          dateMinute
+        }
+      }
+    }
+  }
+}`
+  const data = gqlErrorCheck(await graphql<GraphQLResult<Zone1hResp>>(query))
+  const groups = data.viewer.zones?.[0]?.httpRequests1hGroups ?? []
+
+  const points: TimePoint[] = groups.map((g) => {
+    const s = g.sum ?? {}
+    const u = g.uniq ?? {}
+    const dm = g.dimensions?.dateMinute ?? ''
+    return {
+      label: fmtMinuteLabel(dm),
+      ts: dm,
+      requests: s.requests ?? 0,
+      bytes: s.bytes ?? 0,
+      threats: s.threats ?? 0,
+      pageViews: s.pageViews ?? 0,
+      uniqueVisitors: u.uniques ?? 0,
+      cachedBytes: s.cachedBytes ?? 0,
+    }
+  })
+
+  return { points, summary: aggSummary(groups) }
+}
+
+/* ---------- Zone 汇总（1d 分组，更稳定的天级总数） ---------- */
+
+/**
+ * 查询 zone 的每日分组汇总（pageViews、requests、threats、唯一访客、缓存字节）。
+ * 与 zoneTraffic 相比使用 1d 分组，避免边界小时被截断。
+ */
+export async function zoneSummary(
+  zoneId: string,
+  since: string,
+  until: string,
+): Promise<ZoneSummary> {
+  const query = `{
+  viewer {
+    zones(filter: {zoneTag: ${JSON.stringify(zoneId)}}) {
+      httpRequests1dGroups(
+        limit: 1000
+        since: ${JSON.stringify(since)}
+        until: ${JSON.stringify(until)}
+        orderBy: [date_ASC]
+      ) {
+        sum {
+          requests
+          bytes
+          threats
+          pageViews
+          cachedBytes
+          cachedRequests
+        }
+        uniq {
+          uniques
+        }
+        dimensions {
+          date
+        }
+      }
+    }
+  }
+}`
+  const data = gqlErrorCheck(await graphql<GraphQLResult<Zone1dResp>>(query))
+  const groups = data.viewer.zones?.[0]?.httpRequests1dGroups ?? []
+  return aggSummary(groups)
+}
+
+/* ---------- Zone Top 国家 ---------- */
+
+/**
+ * 按 clientCountryName 聚合 Top N 国家。
+ * 通过 orderBy sum_requests_DESC + limit 拿到最高请求数的分组。
+ */
+export async function zoneTopCountries(
+  zoneId: string,
+  since: string,
+  until: string,
+  limit = 8,
+): Promise<ZoneCountryResult> {
+  const query = `{
+  viewer {
+    zones(filter: {zoneTag: ${JSON.stringify(zoneId)}}) {
+      httpRequests1hGroups(
+        limit: ${Math.max(1, Math.min(50, limit))}
+        since: ${JSON.stringify(since)}
+        until: ${JSON.stringify(until)}
+        orderBy: [sum_requests_DESC]
+      ) {
+        sum {
+          requests
+          bytes
+        }
+        dimensions {
+          clientCountryName
+        }
+      }
+    }
+  }
+}`
+  const data = gqlErrorCheck(await graphql<GraphQLResult<ZoneCountryResp>>(query))
+  const groups = data.viewer.zones?.[0]?.httpRequests1hGroups ?? []
+  let total = 0
+  const rows: CountryRow[] = []
+  for (const g of groups) {
+    const country = g.dimensions?.clientCountryName ?? 'Unknown'
+    if (!country) continue
+    const req = g.sum?.requests ?? 0
+    total += req
+    rows.push({ country, requests: req, bytes: g.sum?.bytes ?? 0 })
+  }
+  // 二次排序去重（GraphQL 可能返回重复国家分组）
+  const merged = new Map<string, CountryRow>()
+  for (const r of rows) {
+    const cur = merged.get(r.country)
+    if (cur) {
+      cur.requests += r.requests
+      cur.bytes += r.bytes
+    } else {
+      merged.set(r.country, { ...r })
+    }
+  }
+  return {
+    rows: [...merged.values()].sort((a, b) => b.requests - a.requests),
+    total,
+  }
+}
+
+/* ---------- Account Workers 调用统计 ---------- */
+
+/**
+ * 查询 account 维度的 Workers 调用统计（workersInvocationsAdaptive）。
+ * 可选能力：若账号未启用 Workers 或无数据，CF 可能返回空数组。
+ */
+export async function accountWorkers(
+  accountId: string,
+  since: string,
+  until: string,
+): Promise<AccountWorkersResult> {
+  const query = `{
+  viewer {
+    accounts(filter: {accountTag: ${JSON.stringify(accountId)}}) {
+      workersInvocationsAdaptive(
+        limit: 1000
+        since: ${JSON.stringify(since)}
+        until: ${JSON.stringify(until)}
+        orderBy: [date_ASC]
+      ) {
+        sum {
+          requests
+          subrequests
+          errors
+        }
+        dimensions {
+          date
+          scriptName
+        }
+      }
+    }
+  }
+}`
+  const data = gqlErrorCheck(await graphql<GraphQLResult<AccountWorkerResp>>(query))
+  const groups = data.viewer.accounts?.[0]?.workersInvocationsAdaptive ?? []
+  let total = 0
+  const rows: WorkerInvocationRow[] = groups.map((g) => {
+    const s = g.sum ?? {}
+    const d = g.dimensions ?? {}
+    total += s.requests ?? 0
+    return {
+      label: d.date ? fmtDayLabel(d.date) : '',
+      script: d.scriptName ?? '—',
+      requests: s.requests ?? 0,
+      errors: s.errors ?? 0,
+      subrequests: s.subrequests ?? 0,
+    }
+  })
+  return { rows, total }
+}
