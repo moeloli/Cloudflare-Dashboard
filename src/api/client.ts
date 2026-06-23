@@ -36,8 +36,6 @@ export interface RequestOptions {
   body?: unknown
   /** 不带认证头（用于公开端点） */
   noAuth?: boolean
-  /** 覆写 Accept 头（如 'application/json' 用于 Workers AI 图像接口返回 base64） */
-  accept?: string
 }
 
 async function request<T>(
@@ -51,7 +49,6 @@ async function request<T>(
   }
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (opts.accept) headers.Accept = opts.accept
   if (!opts.noAuth) Object.assign(headers, authHeaders())
 
   let res: Response

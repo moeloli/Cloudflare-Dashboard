@@ -4,7 +4,7 @@
 
 这是**闭源第三方 Cloudflare 面板**的开源平替。cococ.co 把用户 Cloudflare 凭据发往它自己的服务器、明文存本地、还设了授权码门槛——本项目从根上解决这些信任问题。
 
-## 功能模块（17 个）
+## 功能模块（16 个）
 
 | 分组 | 模块 | 能力 |
 |---|---|---|
@@ -18,7 +18,6 @@
 | | D1 数据库 | **SQL 控制台**、表结构、多语句结果（cococ 仅有绑定，无控制台） |
 | 存储 | R2 存储 | Bucket 管理、对象上传/下载/删除 |
 | 部署 | Pages | 项目列表、部署记录 |
-| | AI Playground | Workers AI 模型列表、文本对话、文生图 |
 | 安全 | SSL/证书 | SSL 模式、Always HTTPS、TLS 1.3、边缘证书 |
 | | WAF/防火墙 | WAF 规则集、IP 访问规则 |
 | | 缓存规则 | 清缓存、开发模式、Page Rules |
@@ -97,7 +96,7 @@ npx wrangler pages dev dist
 │   ├── stores/         # Pinia auth store（多账号 + 凭据）
 │   ├── styles/         # Tailwind v4 + 主题变量
 │   ├── types/          # Cloudflare API 类型
-│   └── views/          # 17 个功能模块视图
+│   └── views/          # 16 个功能模块视图
 └── vite.config.ts     # 含本地 /api/cf 代理
 ```
 

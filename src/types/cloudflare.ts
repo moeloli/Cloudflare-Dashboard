@@ -199,15 +199,6 @@ export interface PagesDeployment {
   deployment_trigger?: { metadata?: { commit_message?: string } }
 }
 
-/* ---------- AI ---------- */
-
-export interface AIModel {
-  id: string
-  name: string
-  description: string
-  task: { type: string }
-}
-
 /* ---------- SSL ---------- */
 
 export interface SSLUniversal {
