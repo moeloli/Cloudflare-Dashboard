@@ -118,8 +118,6 @@ pnpm build    # 类型检查 + 生产构建
 pnpm preview  # 预览构建产物
 ```
 
-类型严格：`vue-tsc` + `noUnusedLocals`，所有模块零类型错误。
-
 ## License
 
 [AGPL-3.0-Later](LICENSE)
