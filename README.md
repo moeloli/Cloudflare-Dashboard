@@ -2,20 +2,7 @@
 
 > 开源、自托管、**凭据零上链**的 Cloudflare 全功能管理面板。
 
-这是 [cococ.co（蜘蛛网络）](https://cococ.co) 这类**闭源第三方 Cloudflare 面板**的开源平替。cococ.co 把用户 Cloudflare 凭据发往它自己的服务器、明文存本地、还设了授权码门槛——本项目从根上解决这些信任问题。
-
-## 为什么需要它
-
-cococ.co 的真实架构（逆向得出）存在三个信任缺陷：
-
-| 问题 | cococ.co | 本项目 |
-|---|---|---|
-| 凭据流向 | 邮箱 + Global API Key 随每次请求发往它的后端 `wuyaapi.feria.eu.org` | 凭据**只存浏览器本地**，仅经**你自己部署的同源代理**透传 |
-| 本地存储 | Cookie(30天) + localStorage **明文**存 API Key | localStorage（明文，MVP），可演进为本地加密 |
-| 使用门槛 | 部署前强制授权码校验，TG 私聊发放 | 无任何门槛，开箱即用 |
-| 代码 | 闭源 | MIT 全开源，代理代码可审计 |
-
-核心区别：**CORS 代理 ≠ 收集数据**。区别在于代理归谁所有、是否存储、是否可审计——本项目代理是你自己部署的同源 Pages Function，纯透传、零存储、代码开源。
+这是**闭源第三方 Cloudflare 面板**的开源平替。cococ.co 把用户 Cloudflare 凭据发往它自己的服务器、明文存本地、还设了授权码门槛——本项目从根上解决这些信任问题。
 
 ## 功能模块（17 个）
 
@@ -135,4 +122,4 @@ pnpm preview  # 预览构建产物
 
 ## License
 
-MIT © 开源贡献者。本项目与 Cloudflare 官方无隶属关系，"Cloudflare" 是 Cloudflare Inc. 的商标。
+[AGPL-3.0-Later](LICENSE)
