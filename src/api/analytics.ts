@@ -69,11 +69,6 @@ export interface AccountWorkersResult {
 
 /* ---------- GraphQL 原始响应类型 ---------- */
 
-interface GraphQLResult<T> {
-  data: T | null
-  errors?: { code?: number; message: string }[]
-}
-
 interface RawSum {
   requests?: number
   bytes?: number
@@ -114,14 +109,6 @@ interface AccountWorkerResp {
 }
 
 /* ---------- 工具函数 ---------- */
-
-function gqlErrorCheck<T>(r: GraphQLResult<T>): T {
-  if (r.errors && r.errors.length) {
-    throw new Error(r.errors.map((e) => e.message).join('; '))
-  }
-  if (!r.data) throw new Error('GraphQL 返回空 data')
-  return r.data
-}
 
 function fmtMinuteLabel(dateMinute: string): string {
   // dateMinute 形如 2024-01-01T00:00Z 或 2024-01-01T00:00:00Z
@@ -186,8 +173,7 @@ export async function zoneTraffic(
     zones(filter: {zoneTag: ${JSON.stringify(zoneId)}}) {
       httpRequests1hGroups(
         limit: 1000
-        since: ${JSON.stringify(since)}
-        until: ${JSON.stringify(until)}
+        filter: {datetime_geq: ${JSON.stringify(since)}, datetime_lt: ${JSON.stringify(until)}}
         orderBy: [dateMinute_ASC]
       ) {
         sum {
@@ -207,7 +193,7 @@ export async function zoneTraffic(
     }
   }
 }`
-  const data = gqlErrorCheck(await graphql<GraphQLResult<Zone1hResp>>(query))
+  const data = await graphql<Zone1hResp>(query)
   const groups = data.viewer.zones?.[0]?.httpRequests1hGroups ?? []
 
   const points: TimePoint[] = groups.map((g) => {
@@ -245,8 +231,7 @@ export async function zoneSummary(
     zones(filter: {zoneTag: ${JSON.stringify(zoneId)}}) {
       httpRequests1dGroups(
         limit: 1000
-        since: ${JSON.stringify(since)}
-        until: ${JSON.stringify(until)}
+        filter: {date_geq: ${JSON.stringify(since)}, date_lt: ${JSON.stringify(until)}}
         orderBy: [date_ASC]
       ) {
         sum {
@@ -267,7 +252,7 @@ export async function zoneSummary(
     }
   }
 }`
-  const data = gqlErrorCheck(await graphql<GraphQLResult<Zone1dResp>>(query))
+  const data = await graphql<Zone1dResp>(query)
   const groups = data.viewer.zones?.[0]?.httpRequests1dGroups ?? []
   return aggSummary(groups)
 }
@@ -288,9 +273,8 @@ export async function zoneTopCountries(
   viewer {
     zones(filter: {zoneTag: ${JSON.stringify(zoneId)}}) {
       httpRequests1hGroups(
-        limit: ${Math.max(1, Math.min(50, limit))}
-        since: ${JSON.stringify(since)}
-        until: ${JSON.stringify(until)}
+        limit: 1000
+        filter: {datetime_geq: ${JSON.stringify(since)}, datetime_lt: ${JSON.stringify(until)}}
         orderBy: [sum_requests_DESC]
       ) {
         sum {
@@ -304,7 +288,7 @@ export async function zoneTopCountries(
     }
   }
 }`
-  const data = gqlErrorCheck(await graphql<GraphQLResult<ZoneCountryResp>>(query))
+  const data = await graphql<ZoneCountryResp>(query)
   const groups = data.viewer.zones?.[0]?.httpRequests1hGroups ?? []
   let total = 0
   const rows: CountryRow[] = []
@@ -327,7 +311,7 @@ export async function zoneTopCountries(
     }
   }
   return {
-    rows: [...merged.values()].sort((a, b) => b.requests - a.requests),
+    rows: [...merged.values()].sort((a, b) => b.requests - a.requests).slice(0, limit),
     total,
   }
 }
@@ -348,8 +332,7 @@ export async function accountWorkers(
     accounts(filter: {accountTag: ${JSON.stringify(accountId)}}) {
       workersInvocationsAdaptive(
         limit: 1000
-        since: ${JSON.stringify(since)}
-        until: ${JSON.stringify(until)}
+        filter: {datetime_geq: ${JSON.stringify(since)}, datetime_lt: ${JSON.stringify(until)}}
         orderBy: [date_ASC]
       ) {
         sum {
@@ -365,7 +348,7 @@ export async function accountWorkers(
     }
   }
 }`
-  const data = gqlErrorCheck(await graphql<GraphQLResult<AccountWorkerResp>>(query))
+  const data = await graphql<AccountWorkerResp>(query)
   const groups = data.viewer.accounts?.[0]?.workersInvocationsAdaptive ?? []
   let total = 0
   const rows: WorkerInvocationRow[] = groups.map((g) => {

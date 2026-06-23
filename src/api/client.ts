@@ -87,7 +87,17 @@ export const http = {
   delete: <T>(path: string, opts?: RequestOptions) => request<T>('DELETE', path, opts),
 }
 
-/** GraphQL Analytics 端点（POST 文本 query） */
+/** GraphQL Analytics 响应结构：{ data, errors }（非 REST 的 { result, success } 壳） */
+interface GraphQLResponse<T> {
+  data: T | null
+  errors?: { code?: number; message: string }[]
+}
+
+/**
+ * GraphQL Analytics 端点（POST 文本 query）。
+ * 注意：CF 的 /graphql 端点返回标准 GraphQL { data, errors } 结构，
+ * 与 REST v4 的 { result, success, errors } 不同，故单独解析。
+ */
 export async function graphql<T>(query: string): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -98,9 +108,11 @@ export async function graphql<T>(query: string): Promise<T> {
     headers,
     body: JSON.stringify({ query }),
   })
-  const data = (await res.json()) as CFResponse<T>
-  if (!res.ok || !data.success) {
-    throw new CFError(data.errors?.[0]?.message ?? `HTTP ${res.status}`)
+  const data = (await res.json()) as GraphQLResponse<T>
+  if (!res.ok || (data.errors && data.errors.length)) {
+    const msg = data.errors?.[0]?.message ?? `HTTP ${res.status}`
+    throw new CFError(msg, data.errors?.[0]?.code, res.status)
   }
-  return data.result as T
+  if (!data.data) throw new CFError('GraphQL 返回空 data', undefined, res.status)
+  return data.data
 }
