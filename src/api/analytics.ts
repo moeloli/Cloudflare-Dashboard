@@ -83,7 +83,7 @@ interface RawUniq {
 interface Raw1hGroup {
   sum?: RawSum
   uniq?: RawUniq
-  dimensions?: { dateMinute?: string; clientCountryName?: string }
+  dimensions?: { datetime?: string; clientCountryName?: string }
 }
 interface Raw1dGroup {
   sum?: RawSum
@@ -174,7 +174,7 @@ export async function zoneTraffic(
       httpRequests1hGroups(
         limit: 1000
         filter: {datetime_geq: ${JSON.stringify(since)}, datetime_lt: ${JSON.stringify(until)}}
-        orderBy: [dateMinute_ASC]
+        orderBy: [datetime_ASC]
       ) {
         sum {
           requests
@@ -187,7 +187,7 @@ export async function zoneTraffic(
           uniques
         }
         dimensions {
-          dateMinute
+          datetime
         }
       }
     }
@@ -199,7 +199,7 @@ export async function zoneTraffic(
   const points: TimePoint[] = groups.map((g) => {
     const s = g.sum ?? {}
     const u = g.uniq ?? {}
-    const dm = g.dimensions?.dateMinute ?? ''
+    const dm = g.dimensions?.datetime ?? ''
     return {
       label: fmtMinuteLabel(dm),
       ts: dm,
