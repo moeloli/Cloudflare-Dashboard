@@ -24,15 +24,27 @@ export interface SslSetting {
   certificate_status?: string
 }
 
-/** 通用边缘证书 */
-export interface UniversalCertificate {
+/** 证书包内的单个证书 */
+export interface CertificatePackCert {
   id: string
-  host: string
+  hosts: string[]
   issuer: string
   signature: string
-  expires_on: string
   status: string
-  modified_on: string
+  expires_on: string
+  priority: number
+}
+
+/** 证书包（Universal / Custom / Advanced），来自 /ssl/certificate_packs */
+export interface CertificatePack {
+  id: string
+  type: string
+  hosts: string[]
+  status: string
+  validity_days?: number
+  certificate_authority?: string
+  validation_method?: string
+  certificates: CertificatePackCert[]
 }
 
 /** WAF 访问规则 */
@@ -134,8 +146,11 @@ export const securityApi = {
       body: { value: enabled ? 'on' : 'off' },
     }),
 
+  /** 列出 zone 下所有证书包（Universal/Custom/Advanced），?status=all 返回全部状态 */
   listCerts: (zoneId: string) =>
-    http.get<UniversalCertificate[]>(`/zones/${zoneId}/ssl/universal/certificates`),
+    http.get<CertificatePack[]>(`/zones/${zoneId}/ssl/certificate_packs`, {
+      params: { status: 'all' },
+    }),
 
   /* --------------------------- WAF / 防火墙 ------------------------------ */
 

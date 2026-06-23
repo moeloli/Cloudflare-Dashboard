@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
 import { RefreshCw, Loader2, ShieldCheck, Globe, Lock, KeyRound } from '@lucide/vue'
-import { zonesApi, securityApi, type SslMode, type UniversalCertificate } from '@/api'
+import { zonesApi, securityApi, type SslMode, type CertificatePack, type CertificatePackCert } from '@/api'
 import type { Zone } from '@/types/cloudflare'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -114,14 +114,32 @@ async function toggleTls13(v: boolean) {
 
 /* ----------------------------- 边缘证书 ----------------------------- */
 
-const certs = ref<UniversalCertificate[]>([])
+const packs = ref<CertificatePack[]>([])
 const certsLoading = ref(false)
+
+/** 扁平化证书行：pack + pack 内每个 cert */
+interface CertRow {
+  packId: string
+  packType: string
+  packStatus: string
+  cert: CertificatePackCert
+}
+const certRows = computed<CertRow[]>(() =>
+  packs.value.flatMap((p) =>
+    (p.certificates ?? []).map((cert) => ({
+      packId: p.id,
+      packType: p.type,
+      packStatus: p.status,
+      cert,
+    })),
+  ),
+)
 
 async function loadCerts() {
   if (!zoneId.value) return
   certsLoading.value = true
   try {
-    certs.value = await securityApi.listCerts(zoneId.value)
+    packs.value = await securityApi.listCerts(zoneId.value)
   } catch (e) {
     toast.error('加载证书列表失败', { description: e instanceof Error ? e.message : String(e) })
   } finally {
@@ -279,7 +297,7 @@ function certStatusClass(s: string): string {
           </div>
 
           <!-- 空状态 -->
-          <div v-else-if="!certs.length" class="flex flex-col items-center gap-3 px-4 py-12 text-center">
+          <div v-else-if="!certRows.length" class="flex flex-col items-center gap-3 px-4 py-12 text-center">
             <div class="flex size-12 items-center justify-center rounded-full bg-muted">
               <Globe class="size-6 text-muted-foreground" />
             </div>
@@ -288,22 +306,24 @@ function certStatusClass(s: string): string {
 
           <!-- 列表 -->
           <template v-else>
-            <div class="grid grid-cols-[minmax(180px,2fr)_minmax(160px,1.5fr)_180px_100px] gap-2 border-b bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground">
+            <div class="grid grid-cols-[minmax(180px,2fr)_140px_180px_120px_90px] gap-2 border-b bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground">
               <span>主机</span>
               <span>签发者</span>
               <span>过期时间</span>
+              <span>类型</span>
               <span>状态</span>
             </div>
             <div class="divide-y">
               <div
-                v-for="c in certs"
-                :key="c.id"
-                class="grid grid-cols-[minmax(180px,2fr)_minmax(160px,1.5fr)_180px_100px] items-center gap-2 px-4 py-3 text-sm hover:bg-accent/40"
+                v-for="row in certRows"
+                :key="row.cert.id"
+                class="grid grid-cols-[minmax(180px,2fr)_140px_180px_120px_90px] items-center gap-2 px-4 py-3 text-sm hover:bg-accent/40"
               >
-                <span class="truncate font-medium" :title="c.host">{{ c.host }}</span>
-                <span class="truncate text-muted-foreground" :title="c.issuer">{{ c.issuer || '—' }}</span>
-                <span class="truncate text-xs text-muted-foreground" :title="fmtDate(c.expires_on)">{{ fmtDate(c.expires_on) }}</span>
-                <Badge variant="secondary" :class="certStatusClass(c.status)">{{ c.status }}</Badge>
+                <span class="truncate font-medium" :title="row.cert.hosts?.join(', ')">{{ row.cert.hosts?.join(', ') || '—' }}</span>
+                <span class="truncate text-muted-foreground" :title="row.cert.issuer">{{ row.cert.issuer || '—' }}</span>
+                <span class="truncate text-xs text-muted-foreground" :title="fmtDate(row.cert.expires_on)">{{ fmtDate(row.cert.expires_on) }}</span>
+                <span class="truncate text-xs text-muted-foreground">{{ row.packType || '—' }}</span>
+                <Badge variant="secondary" :class="certStatusClass(row.cert.status)">{{ row.cert.status }}</Badge>
               </div>
             </div>
           </template>
