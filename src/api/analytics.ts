@@ -88,7 +88,7 @@ interface Raw1hGroup {
 interface Raw1dGroup {
   sum?: RawSum
   uniq?: RawUniq
-  dimensions?: { date?: string }
+  dimensions?: { date?: string; clientCountryName?: string }
 }
 interface RawWorkerGroup {
   sum?: { requests?: number; subrequests?: number; errors?: number }
@@ -102,7 +102,7 @@ interface Zone1dResp {
   viewer: { zones: { httpRequests1dGroups: Raw1dGroup[] }[] }
 }
 interface ZoneCountryResp {
-  viewer: { zones: { httpRequests1hGroups: Raw1hGroup[] }[] }
+  viewer: { zones: { httpRequests1dGroups: Raw1dGroup[] }[] }
 }
 interface AccountWorkerResp {
   viewer: { accounts: { workersInvocationsAdaptive: RawWorkerGroup[] }[] }
@@ -157,17 +157,72 @@ function aggSummary(groups: { sum?: RawSum; uniq?: RawUniq }[]): ZoneSummary {
   }
 }
 
-/* ---------- Zone 流量（1h 分组） ---------- */
+/* ---------- Zone 流量趋势 ---------- */
 
 /**
- * 查询 zone 的每小时请求分组（用于趋势柱状图），同时聚合汇总数据。
+ * 查询 zone 的请求分组（用于趋势柱状图），同时聚合汇总数据。
  * since/until 接受 ISO8601 字符串。
+ *
+ * 粒度自动选择（规避 CF 单查询时间范围限制）：
+ * - 时间跨度 ≤ 3 天：用 httpRequests1hGroups（小时粒度，CF 限制 ≤3 天）
+ * - 时间跨度 > 3 天：用 httpRequests1dGroups（天粒度，支持更长范围）
  */
 export async function zoneTraffic(
   zoneId: string,
   since: string,
   until: string,
 ): Promise<ZoneTrafficResult> {
+  const spanMs = new Date(until).getTime() - new Date(since).getTime()
+  const useDaily = spanMs > 3 * 24 * 60 * 60 * 1000
+
+  if (useDaily) {
+    // 天粒度
+    const query = `{
+  viewer {
+    zones(filter: {zoneTag: ${JSON.stringify(zoneId)}}) {
+      httpRequests1dGroups(
+        limit: 1000
+        filter: {date_geq: ${JSON.stringify(since)}, date_lt: ${JSON.stringify(until)}}
+        orderBy: [date_ASC]
+      ) {
+        sum {
+          requests
+          bytes
+          threats
+          pageViews
+          cachedBytes
+        }
+        uniq {
+          uniques
+        }
+        dimensions {
+          date
+        }
+      }
+    }
+  }
+}`
+    const data = await graphql<Zone1dResp>(query)
+    const groups = data.viewer.zones?.[0]?.httpRequests1dGroups ?? []
+    const points: TimePoint[] = groups.map((g) => {
+      const s = g.sum ?? {}
+      const u = g.uniq ?? {}
+      const dt = g.dimensions?.date ?? ''
+      return {
+        label: fmtDayLabel(dt),
+        ts: dt,
+        requests: s.requests ?? 0,
+        bytes: s.bytes ?? 0,
+        threats: s.threats ?? 0,
+        pageViews: s.pageViews ?? 0,
+        uniqueVisitors: u.uniques ?? 0,
+        cachedBytes: s.cachedBytes ?? 0,
+      }
+    })
+    return { points, summary: aggSummary(groups) }
+  }
+
+  // 小时粒度
   const query = `{
   viewer {
     zones(filter: {zoneTag: ${JSON.stringify(zoneId)}}) {
@@ -272,9 +327,9 @@ export async function zoneTopCountries(
   const query = `{
   viewer {
     zones(filter: {zoneTag: ${JSON.stringify(zoneId)}}) {
-      httpRequests1hGroups(
+      httpRequests1dGroups(
         limit: 1000
-        filter: {datetime_geq: ${JSON.stringify(since)}, datetime_lt: ${JSON.stringify(until)}}
+        filter: {date_geq: ${JSON.stringify(since)}, date_lt: ${JSON.stringify(until)}}
         orderBy: [sum_requests_DESC]
       ) {
         sum {
@@ -289,7 +344,7 @@ export async function zoneTopCountries(
   }
 }`
   const data = await graphql<ZoneCountryResp>(query)
-  const groups = data.viewer.zones?.[0]?.httpRequests1hGroups ?? []
+  const groups = data.viewer.zones?.[0]?.httpRequests1dGroups ?? []
   let total = 0
   const rows: CountryRow[] = []
   for (const g of groups) {
