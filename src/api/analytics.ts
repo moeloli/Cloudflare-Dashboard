@@ -125,6 +125,14 @@ function fmtDayLabel(date: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
+/** 将 ISO8601 时间戳截成 1d 分组所需的纯日期 'YYYY-MM-DD'（CF GraphQL date_geq/date_lt 要求此格式） */
+function toDateOnly(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`
+}
+
 function aggSummary(groups: { sum?: RawSum; uniq?: RawUniq }[]): ZoneSummary {
   let requests = 0
   let pageViews = 0
@@ -182,7 +190,7 @@ export async function zoneTraffic(
     zones(filter: {zoneTag: ${JSON.stringify(zoneId)}}) {
       httpRequests1dGroups(
         limit: 1000
-        filter: {date_geq: ${JSON.stringify(since)}, date_lt: ${JSON.stringify(until)}}
+        filter: {date_geq: ${JSON.stringify(toDateOnly(since))}, date_lt: ${JSON.stringify(toDateOnly(until))}}
         orderBy: [date_ASC]
       ) {
         sum {
@@ -286,7 +294,7 @@ export async function zoneSummary(
     zones(filter: {zoneTag: ${JSON.stringify(zoneId)}}) {
       httpRequests1dGroups(
         limit: 1000
-        filter: {date_geq: ${JSON.stringify(since)}, date_lt: ${JSON.stringify(until)}}
+        filter: {date_geq: ${JSON.stringify(toDateOnly(since))}, date_lt: ${JSON.stringify(toDateOnly(until))}}
         orderBy: [date_ASC]
       ) {
         sum {
@@ -329,7 +337,7 @@ export async function zoneTopCountries(
     zones(filter: {zoneTag: ${JSON.stringify(zoneId)}}) {
       httpRequests1dGroups(
         limit: 1000
-        filter: {date_geq: ${JSON.stringify(since)}, date_lt: ${JSON.stringify(until)}}
+        filter: {date_geq: ${JSON.stringify(toDateOnly(since))}, date_lt: ${JSON.stringify(toDateOnly(until))}}
         orderBy: [sum_requests_DESC]
       ) {
         sum {
