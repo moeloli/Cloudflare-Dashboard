@@ -68,7 +68,7 @@ pnpm install
 pnpm dev
 ```
 
-打开 http://localhost:5173，输入 Cloudflare 邮箱 + Global API Key（或 API Token）即可。
+打开 http://localhost:5173 ，输入 Cloudflare 邮箱 + Global API Key（或 API Token）即可。
 
 本地开发时 `/api/cf/*` 由 Vite dev server 代理透传到 `api.cloudflare.com`（见 `vite.config.ts`），无需部署 Functions。
 
