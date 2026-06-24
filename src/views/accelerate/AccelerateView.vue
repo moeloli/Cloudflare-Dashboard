@@ -279,14 +279,6 @@ function originHint(item: AcceleratedZone): string {
             </div>
           </div>
         </div>
-        <Alert>
-          <ShieldCheck class="size-4" />
-          <AlertTitle>安全声明</AlertTitle>
-          <AlertDescription>
-            所有 Cloudflare API 调用均由浏览器直接发起并同源透传，凭据不上传到任何服务端数据库，
-            刷新页面后请重新登录。加速 Worker 仅做请求转发，不记录请求体内容。
-          </AlertDescription>
-        </Alert>
         <Alert variant="destructive">
           <TriangleAlert class="size-4" />
           <AlertTitle>防滥用声明</AlertTitle>
