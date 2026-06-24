@@ -103,7 +103,7 @@ npx wrangler pages dev dist
 
 ## 路线图
 
-- [ ] 凭据本地 AES-GCM 加密（主密码派生密钥）
+- [x] 凭据本地 AES-GCM 加密（设备指纹派生密钥）
 - [ ] Workers 脚本 CodeMirror 编辑器（语法高亮）
 - [ ] D1 表数据浏览（分页/筛选）
 - [ ] Analytics 图表库化（recharts）
