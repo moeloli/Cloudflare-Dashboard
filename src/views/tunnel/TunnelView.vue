@@ -543,8 +543,8 @@ function fmtDate(s: string | undefined): string {
           </div>
         </ScrollArea>
         <div class="rounded-md border bg-muted/40 p-2 text-xs text-muted-foreground">
-          每条路由把一个公开域名转发到本地服务（如
-          <code class="font-mono">http://localhost:8080</code>）。末条 catch-all 兜底未命中请求（建议
+          每条路由把一个公开域名转发到本地服务：协议选 http、地址填 localhost、端口填 8080，即等效
+          <code class="font-mono">http://localhost:8080</code>。末条 catch-all 兜底未命中请求（建议
           <code class="font-mono">http_status:404</code>）。保存后 cloudflared 重新连接即生效。
         </div>
         <DialogFooter>
