@@ -13,6 +13,7 @@ import {
   Flame,
   BarChart3,
   Network,
+  Share2,
   Wrench,
   Settings,
 } from '@lucide/vue'
@@ -44,6 +45,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'zones', name: 'zones', component: () => import('@/views/zones/ZonesView.vue'), meta: { title: '域名管理', icon: Globe, group: '域名与加速', order: 1 } },
       { path: 'zones/:zoneId', name: 'zone-detail', component: () => import('@/views/zones/ZoneDetailView.vue'), meta: { title: '域名详情', icon: Globe, group: '域名与加速', order: 2 } },
       { path: 'accelerate', name: 'accelerate', component: () => import('@/views/accelerate/AccelerateView.vue'), meta: { title: '一键加速', icon: Zap, group: '域名与加速', order: 3 } },
+      { path: 'saas', name: 'saas', component: () => import('@/views/saas/SaasView.vue'), meta: { title: 'SaaS优选', icon: Share2, group: '域名与加速', order: 4 } },
       { path: 'workers', name: 'workers', component: () => import('@/views/workers/WorkersView.vue'), meta: { title: 'Workers', icon: Server, group: 'Workers 与计算', order: 1 } },
       { path: 'kv', name: 'kv', component: () => import('@/views/kv/KvView.vue'), meta: { title: 'KV 存储', icon: Boxes, group: 'Workers 与计算', order: 2 } },
       { path: 'd1', name: 'd1', component: () => import('@/views/d1/D1View.vue'), meta: { title: 'D1 数据库', icon: Database, group: 'Workers 与计算', order: 3 } },

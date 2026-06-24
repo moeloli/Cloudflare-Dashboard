@@ -208,6 +208,43 @@ export interface SSLUniversal {
   http_status: string
 }
 
+/* ---------- Cloudflare for SaaS (Custom Hostnames) ---------- */
+
+/** Custom Hostname 的 SSL/证书验证信息 */
+export interface CustomHostnameSSL {
+  id: string
+  /** 证书状态：pending_validation | pending_deployment | active | ... */
+  status: string
+  /** 验证方式：http | txt | delegated */
+  method: string
+  type?: string
+  wildcard?: boolean
+  cname?: { name: string; target: string }
+  txt?: { name: string; value: string }
+  http_body?: string
+  http_url?: string
+  expires_on?: string
+}
+
+/** Custom Hostname（接入的访问域名） */
+export interface CustomHostname {
+  id: string
+  hostname: string
+  /** 主机名状态：pending | active | moved | ... */
+  status: string
+  custom_origin_server?: string
+  custom_origin?: string
+  ssl: CustomHostnameSSL | null
+  created_on: string
+  modified_on: string
+}
+
+/** Zone 级回退源（fallback origin） */
+export interface FallbackOrigin {
+  origin: string
+  status?: string
+}
+
 /* ---------- Analytics (GraphQL) ---------- */
 
 export interface AnalyticsResponse {

@@ -4,7 +4,7 @@
 
 这是一个**开源、自托管**的 Cloudflare 全功能管理面板。市面上某些闭源第三方面板会把用户 Cloudflare 凭据发往它自己的服务器、明文存本地、还设授权码门槛——本项目从根上解决这些信任问题。
 
-## 功能模块（16 个）
+## 功能模块（17 个）
 
 | 分组 | 模块 | 能力 |
 |---|---|---|
@@ -13,6 +13,7 @@
 | | 域名详情 | NS/plan、缓存清除、开发模式、概览 |
 | | DNS 记录 | CRUD、A/AAAA/CNAME/TXT/MX/NS 等、多 IP 拆分、小黄云代理、批量 JSON 导入 |
 | | **一键加速** | 向导式部署 Worker + CNAME、已加速域名识别与管理 |
+| | **SaaS优选** | Cloudflare for SaaS、custom hostname 接入、回退源、访问域名加速 |
 | Workers 与计算 | Workers | 脚本列表/编辑/部署、路由、自定义域、workers.dev 子域开关 |
 | | KV 存储 | Namespace/Key 增删改查、值查看（text/json） |
 | | D1 数据库 | **SQL 控制台**、表结构、多语句结果 |
