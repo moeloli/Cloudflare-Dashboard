@@ -18,8 +18,30 @@ export interface TunnelConnection {
 }
 
 /** Tunnel 配置项（简化只读展示） */
+/** Tunnel ingress 规则（路由：hostname+path → service，service 含端口如 http://localhost:8080） */
+export interface IngressRule {
+  /** 匹配的主机名（可选，省略 = catch-all） */
+  hostname?: string
+  /** 匹配路径正则（可选） */
+  path?: string
+  /** 转发目标，如 http://localhost:8080 / https://10.0.1.5:443 / http_status:404 */
+  service: string
+}
+
+/** Tunnel 配置体（对应 cloudflared config.yml 的 config 段） */
+export interface TunnelConfigBody {
+  ingress: IngressRule[]
+  originRequest?: {
+    connectTimeout?: string
+    tlsTimeout?: string
+    noTLSVerify?: boolean
+    httpHostHeader?: string
+  }
+  'warp-routing'?: { enabled?: boolean }
+}
+
 export interface TunnelConfig {
-  config: unknown
+  config: TunnelConfigBody
   tunnel_id: string
   version: string
 }
@@ -63,4 +85,10 @@ export const tunnelApi = {
   /** 查看 Tunnel 配置（只读） */
   getConfig: (id: string) =>
     http.get<TunnelConfig>(`/accounts/${accountId()}/cfd_tunnel/${id}/configurations`),
+
+  /** 写入 Tunnel 配置（ingress 规则等，云端管理） */
+  putConfig: (id: string, config: TunnelConfigBody) =>
+    http.put<TunnelConfig>(`/accounts/${accountId()}/cfd_tunnel/${id}/configurations`, {
+      body: { config },
+    }),
 }

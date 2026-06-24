@@ -10,7 +10,7 @@ import {
   Settings2,
   Trash2,
 } from '@lucide/vue'
-import { tunnelApi, type Tunnel, type TunnelConnection, type TunnelConfig } from '@/api/tunnel'
+import { tunnelApi, type Tunnel, type TunnelConnection, type IngressRule } from '@/api/tunnel'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -47,7 +47,6 @@ const connList = ref<TunnelConnection[]>([])
 const connLoading = ref(false)
 
 const cfgTarget = ref<Tunnel | null>(null)
-const cfgData = ref<TunnelConfig | null>(null)
 const cfgLoading = ref(false)
 
 /* ---------- 删除 ---------- */
@@ -117,14 +116,69 @@ async function viewConnections(t: Tunnel) {
 
 async function viewConfig(t: Tunnel) {
   cfgTarget.value = t
-  cfgData.value = null
   cfgLoading.value = true
+  editingRules.value = []
   try {
-    cfgData.value = await tunnelApi.getConfig(t.id)
+    const cfg = await tunnelApi.getConfig(t.id)
+    // 拷贝一份可编辑的 ingress 规则（至少保留 catch-all）
+    const rules = cfg.config?.ingress?.length ? cfg.config.ingress : [{ service: 'http_status:404' }]
+    editingRules.value = rules.map((r) => ({ ...r }))
   } catch (e) {
     toast.error('获取配置失败', { description: e instanceof Error ? e.message : String(e) })
   } finally {
     cfgLoading.value = false
+  }
+}
+
+/* ---------- ingress 规则编辑 ---------- */
+const editingRules = ref<IngressRule[]>([])
+const cfgSaving = ref(false)
+
+function addRule() {
+  // 新规则插在末条 catch-all 之前
+  const rules = [...editingRules.value]
+  rules.splice(rules.length - 1, 0, { hostname: '', service: 'http://localhost:8080' })
+  editingRules.value = rules
+}
+
+function removeRule(idx: number) {
+  editingRules.value.splice(idx, 1)
+}
+
+/** 校验规则集：每条 service 必填；末条需为 catch-all（无 hostname） */
+function validateRules(rules: IngressRule[]): string | null {
+  if (!rules.length) return '至少需要一条 catch-all 规则'
+  for (let i = 0; i < rules.length; i++) {
+    const r = rules[i]
+    if (!r.service || !r.service.trim()) return `第 ${i + 1} 条规则缺少 service`
+  }
+  const last = rules[rules.length - 1]
+  if (last.hostname) return '末条规则必须是无 hostname 的 catch-all（如 http_status:404）'
+  return null
+}
+
+async function saveConfig() {
+  if (!cfgTarget.value) return
+  const err = validateRules(editingRules.value)
+  if (err) {
+    toast.error('配置校验失败', { description: err })
+    return
+  }
+  cfgSaving.value = true
+  try {
+    // 清理空 hostname/path，规范化为 undefined
+    const ingress = editingRules.value.map((r) => ({
+      service: r.service.trim(),
+      ...(r.hostname?.trim() ? { hostname: r.hostname.trim() } : {}),
+      ...(r.path?.trim() ? { path: r.path.trim() } : {}),
+    }))
+    await tunnelApi.putConfig(cfgTarget.value.id, { ingress })
+    toast.success('配置已保存，cloudflared 下次连接即生效')
+    await viewConfig(cfgTarget.value)
+  } catch (e) {
+    toast.error('保存配置失败', { description: e instanceof Error ? e.message : String(e) })
+  } finally {
+    cfgSaving.value = false
   }
 }
 
@@ -344,21 +398,85 @@ function fmtDate(s: string | undefined): string {
       </DialogContent>
     </Dialog>
 
-    <!-- 配置（只读） -->
+    <!-- 配置（可编辑 ingress 规则） -->
     <Dialog :open="!!cfgTarget" @update:open="(v) => !v && (cfgTarget = null)">
-      <DialogContent class="sm:max-w-xl">
+      <DialogContent class="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>配置 · {{ cfgTarget?.name }}</DialogTitle>
-          <DialogDescription>cloudflared ingress 配置（只读展示）</DialogDescription>
+          <DialogDescription>
+            编辑 ingress 路由规则，把主机名/路径转发到本地端口（如
+            <code class="rounded bg-muted px-1 font-mono text-xs">http://localhost:8080</code>）。末条须为无 hostname 的 catch-all。
+          </DialogDescription>
         </DialogHeader>
         <div v-if="cfgLoading" class="space-y-2">
           <Skeleton v-for="i in 3" :key="i" class="h-10 w-full" />
         </div>
-        <ScrollArea v-else class="max-h-96">
-          <pre class="rounded-md border bg-muted/40 p-3 font-mono text-xs">{{ cfgData ? JSON.stringify(cfgData, null, 2) : '无配置' }}</pre>
+        <ScrollArea v-else class="max-h-[60vh]">
+          <div class="space-y-2 pr-2">
+            <div
+              v-for="(r, i) in editingRules"
+              :key="i"
+              class="rounded-md border p-3"
+            >
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-muted-foreground">
+                  规则 {{ i + 1 }}
+                  <Badge v-if="i === editingRules.length - 1" variant="secondary" class="ml-1">catch-all</Badge>
+                </span>
+                <Button
+                  v-if="i !== editingRules.length - 1"
+                  variant="ghost"
+                  size="icon-sm"
+                  class="text-muted-foreground hover:text-destructive"
+                  @click="removeRule(i)"
+                >
+                  <Trash2 class="size-4" />
+                </Button>
+              </div>
+              <div class="mt-2 grid gap-2 sm:grid-cols-2">
+                <div class="space-y-1">
+                  <Label class="text-xs">主机名 hostname（可选）</Label>
+                  <Input
+                    v-model="r.hostname"
+                    placeholder="app.example.com（留空=catch-all）"
+                    :disabled="i === editingRules.length - 1"
+                    class="h-8 text-xs"
+                  />
+                </div>
+                <div class="space-y-1">
+                  <Label class="text-xs">路径 path 正则（可选）</Label>
+                  <Input
+                    v-model="r.path"
+                    placeholder="/api/.*"
+                    :disabled="i === editingRules.length - 1"
+                    class="h-8 text-xs font-mono"
+                  />
+                </div>
+              </div>
+              <div class="mt-2 space-y-1">
+                <Label class="text-xs">转发目标 service（含端口）</Label>
+                <Input
+                  v-model="r.service"
+                  placeholder="http://localhost:8080"
+                  class="h-8 text-xs font-mono"
+                />
+              </div>
+            </div>
+            <Button variant="outline" size="sm" class="w-full" @click="addRule">
+              <Plus class="size-4" />
+              添加规则（插在 catch-all 之前）
+            </Button>
+          </div>
         </ScrollArea>
+        <div class="rounded-md border bg-muted/40 p-2 text-xs text-muted-foreground">
+          规则自上而下匹配，命中即转发；末条 catch-all 兜底（建议
+          <code class="font-mono">http_status:404</code>）。保存后 cloudflared 重新连接即生效。
+        </div>
         <DialogFooter>
-          <Button variant="outline" @click="cfgTarget = null">关闭</Button>
+          <Button variant="outline" @click="cfgTarget = null">取消</Button>
+          <Button :disabled="cfgSaving" @click="saveConfig">
+            {{ cfgSaving ? '保存中…' : '保存配置' }}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
