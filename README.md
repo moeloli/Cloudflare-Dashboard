@@ -119,4 +119,4 @@ pnpm preview  # 预览构建产物
 
 ## License
 
-[AGPL-3.0-Later](LICENSE)
+[AGPL-3.0-or-later ](LICENSE)
