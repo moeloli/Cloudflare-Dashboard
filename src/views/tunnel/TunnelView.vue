@@ -29,6 +29,13 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 /* ---------- 列表 ---------- */
 const tunnels = ref<Tunnel[]>([])
@@ -117,12 +124,11 @@ async function viewConnections(t: Tunnel) {
 async function viewConfig(t: Tunnel) {
   cfgTarget.value = t
   cfgLoading.value = true
-  editingRules.value = []
+  editingRoutes.value = []
   try {
     const cfg = await tunnelApi.getConfig(t.id)
-    // 拷贝一份可编辑的 ingress 规则（至少保留 catch-all）
     const rules = cfg.config?.ingress?.length ? cfg.config.ingress : [{ service: 'http_status:404' }]
-    editingRules.value = rules.map((r) => ({ ...r }))
+    editingRoutes.value = rules.map(parseService)
   } catch (e) {
     toast.error('获取配置失败', { description: e instanceof Error ? e.message : String(e) })
   } finally {
@@ -130,48 +136,93 @@ async function viewConfig(t: Tunnel) {
   }
 }
 
-/* ---------- ingress 规则编辑 ---------- */
-const editingRules = ref<IngressRule[]>([])
+/* ---------- 公开应用程序路由编辑 ---------- */
+// 编辑态：把 service 拆成 协议+地址+端口 三段，贴 CF 官方 Public Hostname 表单体验
+interface EditableRoute {
+  hostname: string
+  protocol: string
+  address: string
+  port: string
+  /** 是否为 catch-all（无 hostname，仅 service 兜底，如 http_status:404） */
+  isCatchAll: boolean
+  /** catch-all 原始 service 文本 */
+  catchAllService: string
+}
+
+const PROTOCOLS = ['http://', 'https://', 'tcp://', 'ssh://', 'unix:', 'http_status:']
+
+/** 把 ingress 规则解析为可编辑态 */
+function parseService(r: IngressRule): EditableRoute {
+  const hostname = r.hostname ?? ''
+  const service = (r.service ?? '').trim()
+  if (!hostname) {
+    // catch-all（无 hostname）
+    return { hostname: '', protocol: '', address: '', port: '', isCatchAll: true, catchAllService: service }
+  }
+  // 尝试解析 协议://地址:端口
+  const m = service.match(/^(https?|tcp|ssh):\/\/([^:\/]+)(?::(\d+))?/)
+  if (m) {
+    return { hostname, protocol: `${m[1]}://`, address: m[2], port: m[3] ?? '', isCatchAll: false, catchAllService: service }
+  }
+  // 解析失败（unix:/http_status: 等非标准），整体塞 address
+  return { hostname, protocol: '', address: service, port: '', isCatchAll: false, catchAllService: service }
+}
+
+/** 把可编辑态拼回 service 字符串 */
+function buildService(r: EditableRoute): string {
+  if (r.isCatchAll) return r.catchAllService.trim() || 'http_status:404'
+  if (r.protocol === 'unix:' || r.protocol === 'http_status:') return r.address.trim()
+  const addr = r.address.trim() || 'localhost'
+  const port = r.port.trim() ? `:${r.port.trim()}` : ''
+  return `${r.protocol}${addr}${port}`
+}
+
+const editingRoutes = ref<EditableRoute[]>([])
 const cfgSaving = ref(false)
 
-function addRule() {
-  // 新规则插在末条 catch-all 之前
-  const rules = [...editingRules.value]
-  rules.splice(rules.length - 1, 0, { hostname: '', service: 'http://localhost:8080' })
-  editingRules.value = rules
+function addRoute() {
+  const routes = [...editingRoutes.value]
+  routes.splice(routes.length - 1, 0, {
+    hostname: '',
+    protocol: 'http://',
+    address: 'localhost',
+    port: '8080',
+    isCatchAll: false,
+    catchAllService: '',
+  })
+  editingRoutes.value = routes
 }
 
-function removeRule(idx: number) {
-  editingRules.value.splice(idx, 1)
+function removeRoute(idx: number) {
+  editingRoutes.value.splice(idx, 1)
 }
 
-/** 校验规则集：每条 service 必填；末条需为 catch-all（无 hostname） */
-function validateRules(rules: IngressRule[]): string | null {
-  if (!rules.length) return '至少需要一条 catch-all 规则'
-  for (let i = 0; i < rules.length; i++) {
-    const r = rules[i]
-    if (!r.service || !r.service.trim()) return `第 ${i + 1} 条规则缺少 service`
+/** 校验路由集 */
+function validateRoutes(routes: EditableRoute[]): string | null {
+  if (!routes.length) return '至少需要一条 catch-all 兜底规则'
+  for (let i = 0; i < routes.length - 1; i++) {
+    const r = routes[i]
+    if (!r.hostname.trim()) return `第 ${i + 1} 条规则缺少公开域名`
+    if (!r.address.trim()) return `第 ${i + 1} 条规则缺少服务地址`
   }
-  const last = rules[rules.length - 1]
-  if (last.hostname) return '末条规则必须是无 hostname 的 catch-all（如 http_status:404）'
+  const last = routes[routes.length - 1]
+  if (!last.isCatchAll) return '末条须为无公开域名的 catch-all 兜底规则'
   return null
 }
 
 async function saveConfig() {
   if (!cfgTarget.value) return
-  const err = validateRules(editingRules.value)
+  const err = validateRoutes(editingRoutes.value)
   if (err) {
     toast.error('配置校验失败', { description: err })
     return
   }
   cfgSaving.value = true
   try {
-    // 清理空 hostname/path，规范化为 undefined
-    const ingress = editingRules.value.map((r) => ({
-      service: r.service.trim(),
-      ...(r.hostname?.trim() ? { hostname: r.hostname.trim() } : {}),
-      ...(r.path?.trim() ? { path: r.path.trim() } : {}),
-    }))
+    const ingress = editingRoutes.value.map((r) => ({
+      hostname: r.isCatchAll ? undefined : r.hostname.trim(),
+      service: buildService(r),
+    })).filter((r) => r.service)
     await tunnelApi.putConfig(cfgTarget.value.id, { ingress })
     toast.success('配置已保存，cloudflared 下次连接即生效')
     await viewConfig(cfgTarget.value)
@@ -404,8 +455,8 @@ function fmtDate(s: string | undefined): string {
         <DialogHeader>
           <DialogTitle>配置 · {{ cfgTarget?.name }}</DialogTitle>
           <DialogDescription>
-            编辑 ingress 路由规则，把主机名/路径转发到本地端口（如
-            <code class="rounded bg-muted px-1 font-mono text-xs">http://localhost:8080</code>）。末条须为无 hostname 的 catch-all。
+            配置公开应用程序路由：把公开域名转发到本地服务（如
+            <code class="rounded bg-muted px-1 font-mono text-xs">http://localhost:8080</code>）。末条为 catch-all 兜底。
           </DialogDescription>
         </DialogHeader>
         <div v-if="cfgLoading" class="space-y-2">
@@ -414,62 +465,86 @@ function fmtDate(s: string | undefined): string {
         <ScrollArea v-else class="max-h-[60vh]">
           <div class="space-y-2 pr-2">
             <div
-              v-for="(r, i) in editingRules"
+              v-for="(r, i) in editingRoutes"
               :key="i"
               class="rounded-md border p-3"
             >
               <div class="flex items-center justify-between">
                 <span class="text-xs font-medium text-muted-foreground">
-                  规则 {{ i + 1 }}
-                  <Badge v-if="i === editingRules.length - 1" variant="secondary" class="ml-1">catch-all</Badge>
+                  路由 {{ i + 1 }}
+                  <Badge v-if="r.isCatchAll" variant="secondary" class="ml-1">catch-all 兜底</Badge>
                 </span>
                 <Button
-                  v-if="i !== editingRules.length - 1"
+                  v-if="!r.isCatchAll"
                   variant="ghost"
                   size="icon-sm"
                   class="text-muted-foreground hover:text-destructive"
-                  @click="removeRule(i)"
+                  @click="removeRoute(i)"
                 >
                   <Trash2 class="size-4" />
                 </Button>
               </div>
-              <div class="mt-2 grid gap-2 sm:grid-cols-2">
-                <div class="space-y-1">
-                  <Label class="text-xs">主机名 hostname（可选）</Label>
+
+              <!-- 普通路由：公开域名 + 服务(协议/地址/端口) -->
+              <template v-if="!r.isCatchAll">
+                <div class="mt-2 space-y-1">
+                  <Label class="text-xs">公开域名</Label>
                   <Input
                     v-model="r.hostname"
-                    placeholder="app.example.com（留空=catch-all）"
-                    :disabled="i === editingRules.length - 1"
+                    placeholder="app.example.com"
                     class="h-8 text-xs"
                   />
                 </div>
-                <div class="space-y-1">
-                  <Label class="text-xs">路径 path 正则（可选）</Label>
-                  <Input
-                    v-model="r.path"
-                    placeholder="/api/.*"
-                    :disabled="i === editingRules.length - 1"
-                    class="h-8 text-xs font-mono"
-                  />
+                <div class="mt-2 grid gap-2 sm:grid-cols-[110px_1fr_90px]">
+                  <div class="space-y-1">
+                    <Label class="text-xs">协议</Label>
+                    <Select v-model="r.protocol">
+                      <SelectTrigger class="h-8 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem v-for="p in PROTOCOLS" :key="p" :value="p">{{ p }}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div class="space-y-1">
+                    <Label class="text-xs">服务地址</Label>
+                    <Input
+                      v-model="r.address"
+                      :placeholder="r.protocol === 'unix:' ? '/var/run/app.sock' : 'localhost'"
+                      class="h-8 text-xs font-mono"
+                    />
+                  </div>
+                  <div v-if="r.protocol !== 'unix:' && r.protocol !== 'http_status:'" class="space-y-1">
+                    <Label class="text-xs">端口</Label>
+                    <Input
+                      v-model="r.port"
+                      placeholder="8080"
+                      class="h-8 text-xs font-mono"
+                    />
+                  </div>
                 </div>
-              </div>
-              <div class="mt-2 space-y-1">
-                <Label class="text-xs">转发目标 service（含端口）</Label>
+              </template>
+
+              <!-- catch-all：仅一个 service 文本 -->
+              <div v-else class="mt-2 space-y-1">
+                <Label class="text-xs">兜底响应 service</Label>
                 <Input
-                  v-model="r.service"
-                  placeholder="http://localhost:8080"
+                  v-model="r.catchAllService"
+                  placeholder="http_status:404"
                   class="h-8 text-xs font-mono"
                 />
               </div>
             </div>
-            <Button variant="outline" size="sm" class="w-full" @click="addRule">
+            <Button variant="outline" size="sm" class="w-full" @click="addRoute">
               <Plus class="size-4" />
-              添加规则（插在 catch-all 之前）
+              添加公开域名路由
             </Button>
           </div>
         </ScrollArea>
         <div class="rounded-md border bg-muted/40 p-2 text-xs text-muted-foreground">
-          规则自上而下匹配，命中即转发；末条 catch-all 兜底（建议
+          每条路由把一个公开域名转发到本地服务（如
+          <code class="font-mono">http://localhost:8080</code>）。末条 catch-all 兜底未命中请求（建议
           <code class="font-mono">http_status:404</code>）。保存后 cloudflared 重新连接即生效。
         </div>
         <DialogFooter>
