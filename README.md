@@ -19,7 +19,7 @@
 | | D1 数据库 | **SQL 控制台**、表结构、多语句结果 |
 | 存储 | R2 存储 | Bucket 管理、对象上传/下载/删除 |
 | 部署 | Pages | 项目列表、部署记录 |
-| 网络 | Tunnel | 列表、创建（含 token）、连接查看、ingress 规则可视化编辑（端口路由） |
+| Zero Trust | Tunnel | 列表、创建（含 token）、连接查看、ingress 规则可视化编辑（端口路由） |
 | 安全 | SSL/证书 | SSL 模式、Always HTTPS、TLS 1.3、边缘证书 |
 | | WAF/防火墙 | WAF 规则集、IP 访问规则 |
 | | 缓存规则 | 清缓存、开发模式、Page Rules |
