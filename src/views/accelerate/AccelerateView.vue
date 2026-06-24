@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
-import { Zap, Globe, Rocket, Trash2, RefreshCw, Loader2, ShieldCheck, Link2 } from '@lucide/vue'
+import { Zap, Globe, Rocket, Trash2, RefreshCw, Loader2, ShieldCheck, Link2, TriangleAlert } from '@lucide/vue'
 import { zonesApi } from '@/api/zones'
 import {
   DEFAULT_ORIGIN_DOMAIN,
@@ -285,6 +285,14 @@ function originHint(item: AcceleratedZone): string {
           <AlertDescription>
             所有 Cloudflare API 调用均由浏览器直接发起并同源透传，凭据不上传到任何服务端数据库，
             刷新页面后请重新登录。加速 Worker 仅做请求转发，不记录请求体内容。
+          </AlertDescription>
+        </Alert>
+        <Alert variant="destructive">
+          <TriangleAlert class="size-4" />
+          <AlertTitle>防滥用声明</AlertTitle>
+          <AlertDescription>
+            本功能仅用于加速你拥有合法权限的源站。不得为赌博、钓鱼、诈骗、侵权等违法或违规站点提供加速、隐匿源站或规避溯源，
+            亦不得用于规避 Cloudflare 滥用检测。源站内容与法律责任由部署者自负。
           </AlertDescription>
         </Alert>
       </CardContent>
