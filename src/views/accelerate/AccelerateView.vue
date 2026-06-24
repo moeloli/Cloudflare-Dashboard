@@ -251,7 +251,7 @@ function originHint(item: AcceleratedZone): string {
           一键网站加速
         </CardTitle>
         <CardDescription>
-          对标 cococ.co 的核心创新功能：自动部署一个回源 Worker 脚本到 Cloudflare 边缘网络，
+          本面板的核心创新功能：自动部署一个回源 Worker 脚本到 Cloudflare 边缘网络，
           并为访问域名配置 CNAME 指向优选回源域名，实现全站加速。
         </CardDescription>
       </CardHeader>

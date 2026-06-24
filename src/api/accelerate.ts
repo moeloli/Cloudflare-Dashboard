@@ -1,7 +1,7 @@
 /**
  * 一键网站加速编排 API
  *
- * 对标 cococ.co 的加速逻辑：组合调用 zones / dns / workers 三个 API，
+ * 加速编排逻辑：组合调用 zones / dns / workers 三个 API，
  * 在前端完成编排（Cloudflare API 凭据始终由浏览器持有，不在任何服务端落盘）。
  *
  * 流程：
