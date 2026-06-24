@@ -97,9 +97,7 @@ const clearing = ref(false)
 function clearAllCredentials() {
   clearing.value = true
   try {
-    auth.logout()
-    localStorage.removeItem('cf_accounts')
-    localStorage.removeItem('cf_current_account_id')
+    auth.clearAll()
     toast.success('已清除所有本地凭据')
     router.push('/login')
   } finally {
@@ -187,7 +185,8 @@ const stack = ['Vue 3', 'TypeScript', 'Vite', 'shadcn-vue', 'Tailwind CSS v4', '
       <CardContent class="space-y-4">
         <ul class="space-y-2 text-sm text-muted-foreground">
           <li>· 凭据仅保存在浏览器 <code class="rounded bg-muted px-1 py-0.5 text-xs">localStorage</code> 中，不上传任何服务器。</li>
-          <li>· 当前为明文存储，请勿在公共设备上保存凭据。</li>
+          <li>· 敏感字段（API Key / 邮箱）已用 <code class="rounded bg-muted px-1 py-0.5 text-xs">AES-GCM-256</code> 加密存储，密钥由设备指纹经 PBKDF2 派生，本地无明文。</li>
+          <li>· 加密可防本地存储被直接读取，但无法防御同源 XSS 运行时窃取已解密凭据，请勿在公共/不可信设备上保存。</li>
           <li>· 建议使用最小权限的 API Token，而非 Global API Key。</li>
           <li>· 清除浏览器数据或点击下方按钮即可清除所有凭据。</li>
         </ul>

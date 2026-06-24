@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { watch } from 'vue'
 import {
   LayoutDashboard,
   Globe,
@@ -67,8 +68,24 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
+  // 凭据从 localStorage 异步解密加载，未就绪前不拦截，避免刷新瞬间误跳登录页
+  if (!auth.ready) {
+    // store 初始化在模块加载时已启动，这里等待一次微任务即可就绪
+    await new Promise<void>((resolve) => {
+      if (auth.ready) return resolve()
+      const stop = watch(
+        () => auth.ready,
+        (v) => {
+          if (v) {
+            stop()
+            resolve()
+          }
+        },
+      )
+    })
+  }
   if (!to.meta.public && !auth.isAuthed) {
     return { name: 'login', query: { redirect: (to.fullPath === '/login' ? '/' : to.fullPath) } }
   }
