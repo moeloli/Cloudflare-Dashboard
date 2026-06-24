@@ -18,11 +18,11 @@
 | | D1 数据库 | **SQL 控制台**、表结构、多语句结果 |
 | 存储 | R2 存储 | Bucket 管理、对象上传/下载/删除 |
 | 部署 | Pages | 项目列表、部署记录 |
+| 网络 | Tunnel | 列表、创建（含 token）、连接/配置查看 |
 | 安全 | SSL/证书 | SSL 模式、Always HTTPS、TLS 1.3、边缘证书 |
 | | WAF/防火墙 | WAF 规则集、IP 访问规则 |
 | | 缓存规则 | 清缓存、开发模式、Page Rules |
 | 分析 | 分析统计 | GraphQL Analytics、请求趋势、Top 国家（纯 Tailwind 柱状图，无图表库） |
-| | Tunnel | 列表、创建（含 token）、连接/配置查看 |
 | 工具 | 工具箱 | CF IP 列表、DNS 查询、HTTP 头检测、UUID/Base64/时间戳转换 |
 | | 设置 | 多账号管理、凭据安全说明、主题、关于 |
 
