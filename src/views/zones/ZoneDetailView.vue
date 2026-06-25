@@ -13,12 +13,17 @@ import {
   Globe,
   ShieldCheck,
   Zap,
+  Rocket,
+  CheckCircle2,
+  XCircle,
+  Circle,
 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   Card,
   CardContent,
@@ -48,7 +53,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { zonesApi } from '@/api'
+import { zonesApi, OPTIMIZATION_PRESETS, applyOptimizationPreset } from '@/api'
+import type { OptimizationPreset, PresetItemResult } from '@/api'
 import DNSRecordManager from '@/components/dns/DNSRecordManager.vue'
 import type { Zone } from '@/types/cloudflare'
 
@@ -101,6 +107,47 @@ async function toggleDevMode(on: boolean) {
     toast.error('切换开发模式失败', { description: e instanceof Error ? e.message : String(e) })
   } finally {
     devModeLoading.value = false
+  }
+}
+
+/* ---------------- 配置预设 ---------------- */
+
+const presetResults = ref<Record<string, PresetItemResult>>({})
+const applyingPreset = ref<string | null>(null)
+
+function itemStatus(id: string): PresetItemResult | undefined {
+  return presetResults.value[id]
+}
+
+async function applyPreset(preset: OptimizationPreset) {
+  if (
+    !confirm(
+      `确认应用「${preset.name}」方案？\n\n将批量覆盖该域名下 ${preset.settings.length} 项配置，此操作不可撤销。\n如源站不支持 HTTPS，请勿使用「速度优先」（其 SSL 为灵活模式，明文回源）。`,
+    )
+  )
+    return
+  applyingPreset.value = preset.key
+  // 重置该项结果，避免上次结果残留
+  const fresh: Record<string, PresetItemResult> = {}
+  for (const s of preset.settings) fresh[s.id] = { id: s.id, label: s.label, ok: false }
+  presetResults.value = fresh
+  try {
+    const results = await applyOptimizationPreset(zoneId.value, preset, (r) => {
+      presetResults.value = { ...presetResults.value, [r.id]: r }
+    })
+    const okCount = results.filter((r) => r.ok).length
+    const failCount = results.length - okCount
+    if (failCount === 0) {
+      toast.success(`「${preset.name}」已应用`, { description: `全部 ${okCount} 项配置成功` })
+    } else {
+      toast.warning(`「${preset.name}」部分应用`, {
+        description: `成功 ${okCount} 项，失败 ${failCount} 项（失败项多为当前套餐不支持该功能）`,
+      })
+    }
+  } catch (e) {
+    toast.error('应用失败', { description: e instanceof Error ? e.message : String(e) })
+  } finally {
+    applyingPreset.value = null
   }
 }
 
@@ -262,6 +309,7 @@ function fmtDate(s: string | null): string {
       <TabsList>
         <TabsTrigger value="dns">DNS 记录</TabsTrigger>
         <TabsTrigger value="cache">缓存</TabsTrigger>
+        <TabsTrigger value="preset">配置预设</TabsTrigger>
         <TabsTrigger value="overview">概览</TabsTrigger>
       </TabsList>
 
@@ -330,6 +378,61 @@ function fmtDate(s: string | null): string {
               </div>
             </CardContent>
           </Card>
+        </div>
+      </TabsContent>
+
+      <!-- 配置预设 -->
+      <TabsContent value="preset" class="mt-4">
+        <div class="space-y-3">
+          <p class="text-sm text-muted-foreground">
+            选择方向一键批量应用一组 zone 配置；单项失败（如套餐不支持该功能）不阻断其余项，结束后会汇总成功/失败数。
+          </p>
+          <div class="grid gap-4 md:grid-cols-2">
+            <Card v-for="preset in OPTIMIZATION_PRESETS" :key="preset.key">
+              <CardHeader>
+                <CardTitle class="flex items-center gap-2 text-base">
+                  <component
+                    :is="preset.key === 'speed' ? Rocket : ShieldCheck"
+                    class="size-4"
+                    :class="preset.key === 'speed' ? 'text-amber-500' : 'text-primary'"
+                  />
+                  {{ preset.name }}
+                </CardTitle>
+                <CardDescription>{{ preset.description }}</CardDescription>
+              </CardHeader>
+              <CardContent class="space-y-3">
+                <Alert v-if="preset.warning" variant="destructive" class="py-2">
+                  <AlertDescription class="text-xs">{{ preset.warning }}</AlertDescription>
+                </Alert>
+                <ul class="space-y-1.5">
+                  <li v-for="s in preset.settings" :key="s.id" class="flex items-start gap-2 text-xs">
+                    <component
+                      :is="itemStatus(s.id)?.ok ? CheckCircle2 : itemStatus(s.id) ? XCircle : Circle"
+                      class="mt-0.5 size-3.5 shrink-0"
+                      :class="itemStatus(s.id)?.ok ? 'text-emerald-500' : itemStatus(s.id) ? 'text-destructive' : 'text-muted-foreground'"
+                    />
+                    <span class="flex-1">
+                      {{ s.label }}
+                      <span
+                        v-if="itemStatus(s.id)?.error"
+                        :title="itemStatus(s.id)?.error"
+                        class="ml-1 text-destructive/70"
+                      >（失败）</span>
+                    </span>
+                  </li>
+                </ul>
+                <Button class="w-full" :disabled="!!applyingPreset" @click="applyPreset(preset)">
+                  <Loader2 v-if="applyingPreset === preset.key" class="size-4 animate-spin" />
+                  <component
+                    :is="preset.key === 'speed' ? Rocket : ShieldCheck"
+                    v-else
+                    class="size-4"
+                  />
+                  应用此方案
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </TabsContent>
 

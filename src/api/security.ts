@@ -205,6 +205,121 @@ export const securityApi = {
   },
 }
 
+/* -------------------------------------------------------------------------- */
+/*                          配置预设（zone settings 批量）                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 配置预设：对齐 cococ.co「自动优化」，按方向批量应用一组 zone settings。
+ * 取名「配置预设」——本质是预设方案 + 一键应用，并非真"自动"。
+ *
+ * 每项 = 一条 PATCH /zones/{zoneId}/settings/{id} body {value}。
+ * 套餐差异（polish/http3/0rtt 等需 Pro）会让个别项失败，故逐项并发 + 单项容错，
+ * 最终聚合成功/失败清单返回给 UI 展示。
+ */
+
+/** 预设中单个配置项 */
+export interface PresetSetting {
+  /** CF zone setting id，即端点 /zones/{id}/settings/{id} 的 {id} */
+  id: string
+  /** PATCH body 的 value（on/off 字符串、数字、ssl 枚举或 minify 对象） */
+  value: unknown
+  /** 展示给用户的中文标签 */
+  label: string
+}
+
+/** 一个配置预设方案 */
+export interface OptimizationPreset {
+  key: 'speed' | 'security'
+  /** 方案名 */
+  name: string
+  /** 一句话描述 */
+  description: string
+  /** 警示文案（可选，如 SSL flexible 风险提示） */
+  warning?: string
+  settings: PresetSetting[]
+}
+
+/** 速度优先预设（对齐 cococ speed 方向） */
+export const SPEED_PRESET: OptimizationPreset = {
+  key: 'speed',
+  name: '速度优先',
+  description: '激进缓存 + 全面压缩，最大化访问速度',
+  warning:
+    'SSL 设为「灵活」模式，CF→源站为明文回源，仅适合源站不支持 HTTPS 的场景；源站支持 HTTPS 建议改用「安全优先」',
+  settings: [
+    { id: 'security_level', value: 'low', label: '安全级别：低' },
+    { id: 'ssl', value: 'flexible', label: 'SSL 模式：灵活' },
+    { id: 'cache_level', value: 'aggressive', label: '缓存级别：积极' },
+    { id: 'browser_cache_ttl', value: 31536000, label: '浏览器缓存：1 年' },
+    { id: 'polish', value: 'lossless', label: '图片优化：无损' },
+    { id: 'minify', value: { html: 'on', css: 'on', js: 'on' }, label: 'HTML/CSS/JS 压缩' },
+    { id: 'brotli', value: 'on', label: 'Brotli 压缩' },
+    { id: 'early_hints', value: 'on', label: 'Early Hints' },
+    { id: 'http3', value: 'on', label: 'HTTP/3' },
+  ],
+}
+
+/** 安全优先预设（对齐 cococ security 方向） */
+export const SECURITY_PRESET: OptimizationPreset = {
+  key: 'security',
+  name: '安全优先',
+  description: '严格 TLS + 强制 HTTPS + 防护加固，牺牲部分速度换安全',
+  settings: [
+    { id: 'security_level', value: 'high', label: '安全级别：高' },
+    { id: 'ssl', value: 'strict', label: 'SSL 模式：严格' },
+    { id: 'always_use_https', value: 'on', label: '强制 HTTPS' },
+    { id: 'automatic_https_rewrites', value: 'on', label: 'HTTPS 自动重写' },
+    { id: 'tls_1_3', value: 'on', label: 'TLS 1.3' },
+    { id: 'opportunistic_encryption', value: 'on', label: '机会性加密' },
+    { id: 'cache_level', value: 'basic', label: '缓存级别：基础' },
+    { id: 'browser_cache_ttl', value: 14400, label: '浏览器缓存：4 小时' },
+    { id: 'challenge_ttl', value: 1800, label: '访客验证：30 分钟' },
+    { id: 'browser_check', value: 'on', label: '浏览器检查' },
+    { id: 'hotlink_protection', value: 'on', label: '防盗链保护' },
+  ],
+}
+
+/** 全部预设方案 */
+export const OPTIMIZATION_PRESETS: OptimizationPreset[] = [SPEED_PRESET, SECURITY_PRESET]
+
+/** 单项应用结果 */
+export interface PresetItemResult {
+  id: string
+  label: string
+  ok: boolean
+  error?: string
+}
+
+/** 应用一个预设方案：并发 PATCH 全部 settings，单项失败不阻断。
+ *  @param onProgress 每完成一项回调（用于 UI 实时刷新） */
+export async function applyOptimizationPreset(
+  zoneId: string,
+  preset: OptimizationPreset,
+  onProgress?: (r: PresetItemResult) => void,
+): Promise<PresetItemResult[]> {
+  const results = await Promise.all(
+    preset.settings.map(async (s) => {
+      try {
+        await http.patch(`/zones/${zoneId}/settings/${s.id}`, { body: { value: s.value } })
+        const r: PresetItemResult = { id: s.id, label: s.label, ok: true }
+        onProgress?.(r)
+        return r
+      } catch (e) {
+        const r: PresetItemResult = {
+          id: s.id,
+          label: s.label,
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        }
+        onProgress?.(r)
+        return r
+      }
+    }),
+  )
+  return results
+}
+
 /** 暴露当前 account id（account 维度查询用） */
 export function currentAccountId(): string {
   return accountId()
