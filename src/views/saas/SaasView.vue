@@ -94,7 +94,15 @@ const form = reactive({
   originDomain: '', // domain 模式=源站域名(非 CF 代理，如对象存储/CDN 域名)；ip 模式=回源域名(账号下 zone 子域)
   originIp: '', // 仅 ip 模式显示，源站真实 IP
   preferredDomain: DEFAULT_PREFERRED_DOMAIN,
+  customPreferred: '', // 优选域名选「自定义…」时填的自定义域名
 })
+
+/** 优选域名是否为自定义模式（选中 __custom__） */
+const customPreferredMode = computed(() => form.preferredDomain === '__custom__')
+/** 实际用于部署的优选域名 */
+const preferredDomainValue = computed(() =>
+  customPreferredMode.value ? form.customPreferred.trim() : form.preferredDomain,
+)
 
 /** 拼出完整访问域名：前缀为空或 @ 时 = 主域名，否则 `${前缀}.${主域名}` */
 const accessDomain = computed(() => {
@@ -208,7 +216,11 @@ async function onDeploy() {
       return
     }
   }
-  if (!form.preferredDomain) {
+  if (customPreferredMode.value && !form.customPreferred.trim()) {
+    toast.error('请填写自定义优选域名')
+    return
+  }
+  if (!preferredDomainValue.value) {
     toast.error('请选择优选域名')
     return
   }
@@ -225,7 +237,7 @@ async function onDeploy() {
     originMode: form.originMode,
     originDomain: form.originDomain.trim(),
     originIp: form.originMode === 'ip' ? form.originIp.trim() : undefined,
-    preferredDomain: form.preferredDomain,
+    preferredDomain: preferredDomainValue.value,
   }
 
   deploying.value = true
@@ -464,8 +476,14 @@ function statusClass(status: string): string {
                   <SelectItem v-for="d in PREFERRED_DOMAINS" :key="d" :value="d">
                     {{ d }}
                   </SelectItem>
+                  <SelectItem value="__custom__">自定义…</SelectItem>
                 </SelectContent>
               </Select>
+              <Input
+                v-if="customPreferredMode"
+                v-model="form.customPreferred"
+                placeholder="自定义优选域名（如 cdn.example.com）"
+              />
               <p class="text-xs text-muted-foreground">访问域名 CNAME 指向此优选域名，开启小黄云代理</p>
             </div>
 
