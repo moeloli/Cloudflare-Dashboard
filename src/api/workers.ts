@@ -34,15 +34,34 @@ export const workersApi = {
     return res.text()
   },
 
-  /** 上传/更新脚本（ES Module 格式，export default { fetch }）。 */
+  /**
+   * 上传/更新脚本（ES Module 格式）。
+   *
+   * CF Upload Worker Module 端点要求 multipart/form-data：
+   *   - part `metadata`（application/json）：{ main_module, compatibility_date }
+   *   - part 名 = main_module 的值（application/javascript+module）：脚本源码
+   * 顶层 Content-Type 由 FormData 自动设为 multipart/form-data，禁止手动指定。
+   */
   uploadScript: async (scriptName: string, script: string): Promise<void> => {
+    const mainModule = 'worker.js'
+    const form = new FormData()
+    form.append(
+      'metadata',
+      new Blob(
+        [JSON.stringify({ main_module: mainModule, compatibility_date: '2024-11-01' })],
+        { type: 'application/json' },
+      ),
+    )
+    form.append(
+      mainModule,
+      new Blob([script], { type: 'application/javascript+module' }),
+    )
     const res = await fetch(
       `${BASE}/accounts/${accountId()}/workers/scripts/${scriptName}`,
       {
         method: 'PUT',
-        // ES Module 脚本必须声明 +module，否则 CF 按 Service Worker 解析，遇 export 即语法错
-        headers: { ...authHeaders(), 'Content-Type': 'application/javascript+module' },
-        body: script,
+        headers: authHeaders(),
+        body: form,
       },
     )
     if (!res.ok) {
