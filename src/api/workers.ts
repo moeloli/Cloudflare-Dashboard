@@ -1,4 +1,4 @@
-import { http } from './client'
+import { http, authHeaders } from './client'
 import { useAuthStore } from '@/stores/auth'
 import type { WorkerDomain, WorkerRoute, WorkersSubdomain } from '@/types/cloudflare'
 
@@ -28,7 +28,7 @@ export const workersApi = {
   getScriptContent: async (scriptName: string): Promise<string> => {
     const res = await fetch(
       `${BASE}/accounts/${accountId()}/workers/scripts/${scriptName}`,
-      { headers: { Accept: 'application/javascript' } },
+      { headers: { ...authHeaders(), Accept: 'application/javascript' } },
     )
     if (!res.ok) throw new Error(`读取脚本失败（HTTP ${res.status}）`)
     return res.text()
@@ -40,7 +40,7 @@ export const workersApi = {
       `${BASE}/accounts/${accountId()}/workers/scripts/${scriptName}`,
       {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/javascript' },
+        headers: { ...authHeaders(), 'Content-Type': 'application/javascript' },
         body: script,
       },
     )

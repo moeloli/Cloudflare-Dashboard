@@ -24,7 +24,7 @@ export class CFError extends Error {
 }
 
 /** 构造认证头：Global API Key 用 X-Auth-Email/X-Auth-Key；API Token 用 Bearer */
-function authHeaders(): Record<string, string> {
+export function authHeaders(): Record<string, string> {
   const acc = useAuthStore().currentAccount
   if (!acc) throw new CFError('未登录 Cloudflare 账号', 401)
   if (acc.authType === 'token') return { Authorization: `Bearer ${acc.apiKey}` }
