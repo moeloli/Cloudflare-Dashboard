@@ -28,7 +28,7 @@ export const zonesApi = {
 
   /** 开发模式开关（true 开发模式跳过缓存） */
   setDevelopmentMode: (zoneId: string, enabled: boolean) =>
-    http.patch<{ id: string; value: string }>(`/zones/${zoneId}/development_mode`, {
+    http.patch<{ id: string; value: string }>(`/zones/${zoneId}/settings/development_mode`, {
       body: { value: enabled ? 'on' : 'off' },
     }),
 }
