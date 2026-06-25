@@ -86,18 +86,40 @@ export function generateWorkerScript(originUrl: string, cacheTtl: number): strin
 const ORIGIN_URL = ${JSON.stringify(originUrl)};
 const CACHE_TTL = ${ttl};
 
+// 回源请求头白名单：只透传这些，避免带 hop-by-hop / CF 内部头干扰源站
+const REQ_HEADERS = [
+  'accept', 'accept-encoding', 'accept-language', 'authorization',
+  'content-type', 'content-length', 'user-agent', 'cache-control',
+  'pragma', 'origin', 'referer', 'cookie', 'x-requested-with', 'range',
+];
+// 回源响应头白名单：不透传 location，避免源站重定向把浏览器弹回源域名暴露源站
+const RESP_HEADERS = [
+  'content-type', 'content-encoding', 'content-length', 'content-disposition',
+  'cache-control', 'etag', 'last-modified', 'expires', 'vary', 'set-cookie',
+];
+
+function buildProxyHeaders(src, targetHost) {
+  const h = new Headers();
+  for (const [k, v] of src.entries()) {
+    if (REQ_HEADERS.includes(k.toLowerCase())) h.set(k, v);
+  }
+  h.set('Host', targetHost);
+  if (!h.has('User-Agent')) {
+    h.set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+  }
+  return h;
+}
+
 export default {
   async fetch(request) {
     const reqUrl = new URL(request.url);
     const target = new URL(reqUrl.pathname + reqUrl.search, ORIGIN_URL);
 
-    // 构造回源请求：修正 Host，GET/HEAD 不得带 body（Workers runtime 硬性规定）
-    const headers = new Headers(request.headers);
-    headers.set('Host', target.host);
+    // 构造回源请求：白名单请求头 + 修正 Host，GET/HEAD 不得带 body
     const hasBody = request.method !== 'GET' && request.method !== 'HEAD' && request.body != null;
     const originReq = new Request(target, {
       method: request.method,
-      headers,
+      headers: buildProxyHeaders(request.headers, target.host),
       body: hasBody ? request.body : undefined,
       redirect: 'follow',
     });
@@ -112,12 +134,16 @@ export default {
       });
     }
 
-    // 透传响应；缓存仅靠 s-maxage 头提示，不在 Worker 内动 Cache API（省 subrequest 配额）
-    if (CACHE_TTL > 0 && resp.ok && (request.method === 'GET' || request.method === 'HEAD')) {
-      resp = new Response(resp.body, resp);
-      resp.headers.set('Cache-Control', 's-maxage=' + CACHE_TTL + ', max-age=0');
+    // 响应头白名单透传（不含 location），重写为可变头方便加 s-maxage
+    const outHeaders = new Headers();
+    for (const [k, v] of resp.headers.entries()) {
+      if (RESP_HEADERS.includes(k.toLowerCase())) outHeaders.set(k, v);
     }
-    return resp;
+    // 缓存仅靠 s-maxage 头提示 CF 边缘缓存，不在 Worker 内动 Cache API（省 subrequest 配额）
+    if (CACHE_TTL > 0 && resp.ok && (request.method === 'GET' || request.method === 'HEAD')) {
+      outHeaders.set('Cache-Control', 's-maxage=' + CACHE_TTL + ', max-age=0');
+    }
+    return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers: outHeaders });
   }
 }
 `
