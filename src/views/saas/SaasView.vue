@@ -21,6 +21,7 @@ import {
   isValidIp,
   listSaasDeployments,
   removeSaas,
+  type OriginMode,
   type SaasDeployConfig,
   type SaasDeployProgress,
   type SaasDeployment,
@@ -89,8 +90,9 @@ onMounted(loadZones)
 const form = reactive({
   zoneId: '' as string,
   prefix: 'www', // 访问域名前缀，留空或 @ 表示根域
-  originDomain: '', // 回源域名（账号下某 zone 子域）
-  originIp: '', // 源站真实 IP
+  originMode: 'domain' as OriginMode, // 源站模式：domain=源站域名（Worker/已有域名）；ip=源站 IP（传统服务器）
+  originDomain: '', // domain 模式=源站域名(如 cloud-mail.workers.dev)；ip 模式=回源域名(账号下 zone 子域)
+  originIp: '', // 仅 ip 模式显示，源站真实 IP
   preferredDomain: DEFAULT_PREFERRED_DOMAIN,
 })
 
@@ -109,6 +111,21 @@ const originIpInvalid = computed(() => {
   if (!v) return false
   return !isValidIp(v)
 })
+
+/** 回源域名输入框的 label/placeholder/提示随源站模式变化 */
+const originDomainLabel = computed(() =>
+  form.originMode === 'domain' ? '源站域名' : '回源域名',
+)
+const originDomainPlaceholder = computed(() =>
+  form.originMode === 'domain'
+    ? 'cloud-mail.workers.dev 或 mail.example.com'
+    : 'saas-origin.example.com',
+)
+const originDomainHint = computed(() =>
+  form.originMode === 'domain'
+    ? '源站 Worker 域名或任意可达的源站域名，直接作为回源目标'
+    : '账号下某 zone 的子域名，需可创建 A 记录，作为 fallback origin',
+)
 
 interface StepState {
   label: string
@@ -178,16 +195,18 @@ async function onDeploy() {
     return
   }
   if (!form.originDomain.trim()) {
-    toast.error('请填写回源域名')
+    toast.error(form.originMode === 'domain' ? '请填写源站域名' : '请填写回源域名')
     return
   }
-  if (!form.originIp.trim()) {
-    toast.error('请填写源站 IP')
-    return
-  }
-  if (originIpInvalid.value) {
-    toast.error('源站 IP 格式不正确')
-    return
+  if (form.originMode === 'ip') {
+    if (!form.originIp.trim()) {
+      toast.error('请填写源站 IP')
+      return
+    }
+    if (originIpInvalid.value) {
+      toast.error('源站 IP 格式不正确')
+      return
+    }
   }
   if (!form.preferredDomain) {
     toast.error('请选择优选域名')
@@ -203,8 +222,9 @@ async function onDeploy() {
 
   const config: SaasDeployConfig = {
     accessDomain: accessDomain.value,
+    originMode: form.originMode,
     originDomain: form.originDomain.trim(),
-    originIp: form.originIp.trim(),
+    originIp: form.originMode === 'ip' ? form.originIp.trim() : undefined,
     preferredDomain: form.preferredDomain,
   }
 
@@ -388,15 +408,39 @@ function statusClass(status: string): string {
               <Badge variant="secondary">{{ accessDomain || '—' }}</Badge>
             </div>
 
-            <!-- 回源域名 -->
+            <!-- 源站模式 -->
             <div class="space-y-2">
-              <Label>回源域名</Label>
-              <Input v-model="form.originDomain" placeholder="saas-origin.example.com" />
-              <p class="text-xs text-muted-foreground">账号下某 zone 的子域名，需可创建 A 记录，作为 fallback origin</p>
+              <Label>源站模式</Label>
+              <div class="flex gap-2">
+                <Button
+                  :variant="form.originMode === 'domain' ? 'default' : 'outline'"
+                  size="sm"
+                  @click="form.originMode = 'domain'"
+                >
+                  源站域名（Worker/已有域名）
+                </Button>
+                <Button
+                  :variant="form.originMode === 'ip' ? 'default' : 'outline'"
+                  size="sm"
+                  @click="form.originMode = 'ip'"
+                >
+                  源站 IP（传统服务器）
+                </Button>
+              </div>
+              <p class="text-xs text-muted-foreground">
+                源站是 CF Worker 或已有公网域名时选「源站域名」，无需填 IP；源站是传统服务器只有 IP 时选「源站 IP」。
+              </p>
             </div>
 
-            <!-- 源站 IP -->
+            <!-- 回源域名 / 源站域名（label/placeholder/提示随模式变化） -->
             <div class="space-y-2">
+              <Label>{{ originDomainLabel }}</Label>
+              <Input v-model="form.originDomain" :placeholder="originDomainPlaceholder" />
+              <p class="text-xs text-muted-foreground">{{ originDomainHint }}</p>
+            </div>
+
+            <!-- 源站 IP（仅 ip 模式显示） -->
+            <div v-if="form.originMode === 'ip'" class="space-y-2">
               <Label>源站 IP</Label>
               <Input v-model="form.originIp" placeholder="1.1.1.1" />
               <p v-if="originIpInvalid" class="text-xs text-destructive">IP 格式不正确，支持 IPv4 / IPv6</p>

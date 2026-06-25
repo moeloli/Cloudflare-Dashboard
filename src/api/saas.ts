@@ -4,10 +4,17 @@
  * 复刻 cococ.co 的 "SaaS 优选加速部署" 能力，技术基于 Cloudflare for SaaS：
  * 在用户自己账号下的 zone（SaaS 提供方）配置 fallback origin（回退源 = 回源域名），
  * 再把访问域名作为 custom hostname 接入该 zone，访问域名 CNAME 到优选域名，
- * 由 CF 边缘代理到回源域名（其 A 记录指向源站 IP）。
+ * 由 CF 边缘代理回源。
+ *
+ * 两种源站模式：
+ * - domain 模式：源站已有公网域名（如 CF Worker 的 xxx.workers.dev、绑了自定义域的 Worker、
+ *   对象存储域名等）。不需 A 记录、不需 IP，直接以源站域名作为 custom_origin_server。
+ *   fallback_origin 与 custom_hostname 都挂在访问域名所属 zone（accessZone）上。
+ * - ip 模式：源站是传统服务器。在回源域名所属 zone（originZone）建 A/AAAA 记录指向源站 IP，
+ *   fallback_origin 与 custom_hostname 挂在 originZone 上。
  *
  * 与 accelerate.ts（Worker 回源 + CNAME 公共优选域名）的区别：
- * - 本模块用 CF for SaaS 原生能力，回源域名在用户自己账号下，不依赖 cococ 公共优选基础设施
+ * - 本模块用 CF for SaaS 原生能力，回源目标在用户自己账号下管理，不依赖 cococ 公共优选基础设施
  * - 访问域名不必在用户账号下（第三方域名也可加速，靠 CNAME + custom hostname 接管）
  *
  * 凭据安全模型继承：所有 CF API 调用由浏览器发起并同源透传，不在任何服务端落盘。
@@ -32,14 +39,23 @@ export const PREFERRED_DOMAINS = ['cdn.cnno.de', 'cdn.ddeed.de'] as const
 /** 默认优选域名 */
 export const DEFAULT_PREFERRED_DOMAIN = 'cdn.cnno.de'
 
+/** 源站模式：domain=源站已有公网域名(如 CF Worker)；ip=源站是传统服务器需配 A 记录 */
+export type OriginMode = 'domain' | 'ip'
+
 /** 部署配置 */
 export interface SaasDeployConfig {
   /** 访问域名（要加速的主机名，如 www.example.com 或 example.com） */
   accessDomain: string
-  /** 回源域名（用户账号下某 zone 的子域，作为 fallback origin，其 A 记录指向源站） */
+  /** 源站模式：domain=源站已有公网域名(如 CF Worker)；ip=源站是传统服务器需配 A 记录 */
+  originMode: OriginMode
+  /**
+   * 回源目标域名：
+   * - domain 模式=源站域名(如 cloud-mail.workers.dev)，直接作为 custom_origin_server
+   * - ip 模式=账号下某 zone 子域(作为 fallback origin，其 A 记录指向 originIp)
+   */
   originDomain: string
-  /** 源站真实 IP（回源域名 A/AAAA 记录指向它） */
-  originIp: string
+  /** 仅 ip 模式必填：源站真实 IP，回源域名 A/AAAA 记录指向它 */
+  originIp?: string
   /** 优选域名（访问域名 CNAME 目标） */
   preferredDomain: string
 }
@@ -62,9 +78,9 @@ export interface SaasDeployment {
   status: string
   /** SSL 证书状态：pending_validation | pending_deployment | active */
   sslStatus: string
-  /** 回源域名（所属 zone 的 fallback origin） */
+  /** 回源域名（domain 模式=源站域名；ip 模式=承载 A 记录的回源子域） */
   originDomain: string
-  /** 回源域名所属 zone id */
+  /** 承载 fallback_origin / custom_hostname 的 zone id（domain 模式=accessZone；ip 模式=originZone） */
   originZoneId: string
   zoneName: string
   /** 是否需要手动配置访问域名 CNAME（accessDomain 不在账号内时） */
@@ -215,11 +231,18 @@ export async function listSaasDeployments(): Promise<SaasDeployment[]> {
 /**
  * 部署 SaaS 优选加速。
  *
+ * 两种源站模式（对齐 cococ.co：两种模式都设 zone 级 fallback_origin）：
+ * - domain 模式：源站已有公网域名（如 CF Worker 的 xxx.workers.dev）。
+ *   不需建 A 记录、不需 IP。fallback_origin 与 custom_hostname 都挂在 accessZone 上
+ *   （源站域名通常不在用户账号下，无法挂在源站所属 zone）。
+ * - ip 模式：源站是传统服务器。在 originZone（回源域名所属 zone）建 A 记录指向源站 IP，
+ *   fallback_origin 与 custom_hostname 挂在 originZone 上。
+ *
  * 步骤：
- *   ① 找回源域名 originDomain 所属 zone（originZoneId）
- *   ② 在 originZoneId 为 originDomain 建/更新 A(AAAA) 记录 → originIp（proxied=true）
- *   ③ PUT fallback_origin = originDomain
- *   ④ POST custom_hostname = accessDomain（ssl.method=http）
+ *   ① 确定配置 zone（targetZone）：domain=accessZone；ip=originZone
+ *   ② ip 模式：在 originZone 为 originDomain 建/更新 A(AAAA) 记录 → originIp
+ *   ③ PUT fallback_origin = originDomain（挂 targetZone）
+ *   ④ POST custom_hostname = accessDomain（custom_origin_server=originDomain，挂 targetZone）
  *   ⑤ 访问域名 CNAME：若 accessDomain 在账号某 zone 下，建 CNAME → preferredDomain；否则标记需手动
  *
  * @param config 部署配置
@@ -229,68 +252,94 @@ export async function deploySaas(
   config: SaasDeployConfig,
   onProgress?: (p: SaasDeployProgress) => void,
 ): Promise<SaasDeployResult> {
-  const { accessDomain, originDomain, originIp, preferredDomain } = config
+  const { accessDomain, originMode, originDomain, originIp, preferredDomain } = config
 
   const zones = await zonesApi.list({ per_page: 50 })
 
-  // ① 找回源域名所属 zone
-  const originZone = findZoneForDomain(zones, originDomain)
-  if (!originZone) {
-    throw new Error(`未找到回源域名 ${originDomain} 所属的 zone，请确认该域名在当前 Cloudflare 账号下`)
+  // 访问域名所属 zone（用于 CNAME，及 domain 模式下承载 fallback/hostname）
+  const accessZone = findZoneForDomain(zones, accessDomain)
+
+  // ① 确定配置 zone 与 originZone
+  let originZone: Zone | undefined
+  let targetZone: Zone
+  if (originMode === 'ip') {
+    // ip 模式：回源域名必须在账号下（要在其所属 zone 建 A 记录）
+    originZone = findZoneForDomain(zones, originDomain)
+    if (!originZone) {
+      throw new Error(`未找到回源域名 ${originDomain} 所属的 zone，请确认该域名在当前 Cloudflare 账号下`)
+    }
+    targetZone = originZone
+  } else {
+    // domain 模式：源站域名通常不在账号下，挂在 accessZone 上
+    if (!accessZone) {
+      throw new Error('访问域名需在账号下，或用 IP 模式')
+    }
+    targetZone = accessZone
   }
 
-  // 校验：回源域名不能与访问域名所属主域名相同
-  const accessZone = findZoneForDomain(zones, accessDomain)
-  if (accessZone && accessZone.id === originZone.id && normalizeDomain(accessDomain) === normalizeDomain(originDomain)) {
+  // 校验：回源域名不能与访问域名相同
+  if (normalizeDomain(accessDomain) === normalizeDomain(originDomain)) {
     throw new Error('回源域名不能与访问域名相同')
   }
 
-  // ② 建/更新回源域名 A(AAAA) 记录 → originIp
-  onProgress?.({ step: 'dns', message: '正在为回源域名配置 A 记录…', ok: true })
-  const type = ipRecordType(originIp)
-  try {
-    const existing = await dnsApi.list(originZone.id, { name: originDomain, type })
-    if (existing.length > 0) {
-      await dnsApi.update(originZone.id, existing[0].id, {
-        type,
-        name: originDomain,
-        content: originIp,
-        proxied: true,
-        comment: 'SaaS 优选回源 A 记录',
-      })
-    } else {
-      await dnsApi.create(originZone.id, {
-        type,
-        name: originDomain,
-        content: originIp,
-        proxied: true,
-        comment: 'SaaS 优选回源 A 记录',
+  // ② ip 模式：建/更新回源域名 A(AAAA) 记录 → originIp；domain 模式跳过
+  if (originMode === 'ip') {
+    if (!originZone) {
+      // 类型收窄保护，理论上不会走到
+      throw new Error('ip 模式缺少回源域名所属 zone')
+    }
+    if (!originIp) {
+      throw new Error('ip 模式必须提供源站 IP')
+    }
+    onProgress?.({ step: 'dns', message: '正在为回源域名配置 A 记录…', ok: true })
+    const type = ipRecordType(originIp)
+    try {
+      const existing = await dnsApi.list(originZone.id, { name: originDomain, type })
+      if (existing.length > 0) {
+        await dnsApi.update(originZone.id, existing[0].id, {
+          type,
+          name: originDomain,
+          content: originIp,
+          proxied: true,
+          comment: 'SaaS 优选回源 A 记录',
+        })
+      } else {
+        await dnsApi.create(originZone.id, {
+          type,
+          name: originDomain,
+          content: originIp,
+          proxied: true,
+          comment: 'SaaS 优选回源 A 记录',
+        })
+      }
+    } catch (e) {
+      // A 记录失败不阻断（可能已存在或用户自行管理），降级继续
+      onProgress?.({
+        step: 'dns',
+        message: `回源 A 记录配置跳过：${e instanceof Error ? e.message : String(e)}`,
+        ok: false,
       })
     }
-  } catch (e) {
-    // A 记录失败不阻断（可能已存在或用户自行管理），降级继续
-    onProgress?.({
-      step: 'dns',
-      message: `回源 A 记录配置跳过：${e instanceof Error ? e.message : String(e)}`,
-      ok: false,
-    })
+  } else {
+    // domain 模式无需 A 记录，发一个跳过提示保持步骤连续
+    onProgress?.({ step: 'dns', message: '源站域名模式，跳过 A 记录配置', ok: true })
   }
 
-  // ③ 设置 fallback origin = 回源域名
+  // ③ 设置 fallback origin = 回源域名（挂 targetZone）
   onProgress?.({ step: 'fallback', message: '正在配置回退源（fallback origin）…', ok: true })
   try {
-    await setFallbackOrigin(originZone.id, originDomain)
+    await setFallbackOrigin(targetZone.id, originDomain)
   } catch (e) {
-    throw new Error(`配置回退源失败：${e instanceof Error ? e.message : String(e)}（回源 A 记录已创建）`)
+    throw new Error(`配置回退源失败：${e instanceof Error ? e.message : String(e)}`)
   }
 
-  // ④ 接入访问域名 custom hostname
+  // ④ 接入访问域名 custom hostname（挂 targetZone，custom_origin_server=originDomain）
   onProgress?.({ step: 'hostname', message: '正在接入访问域名（custom hostname）…', ok: true })
   let hostname: CustomHostname
   try {
-    hostname = await createCustomHostname(originZone.id, accessDomain, originDomain)
+    hostname = await createCustomHostname(targetZone.id, accessDomain, originDomain)
   } catch (e) {
-    throw new Error(`接入访问域名失败：${e instanceof Error ? e.message : String(e)}（回退源与 A 记录已配置）`)
+    throw new Error(`接入访问域名失败：${e instanceof Error ? e.message : String(e)}（回退源已配置）`)
   }
 
   // ⑤ 访问域名 CNAME → 优选域名
@@ -338,8 +387,8 @@ export async function deploySaas(
     status: hostname.status,
     sslStatus: hostname.ssl?.status ?? 'pending',
     originDomain,
-    originZoneId: originZone.id,
-    zoneName: originZone.name,
+    originZoneId: targetZone.id,
+    zoneName: targetZone.name,
     manualCname,
     preferredDomain,
   }
