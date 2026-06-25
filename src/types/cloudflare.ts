@@ -79,6 +79,8 @@ export interface DNSRecord {
   ttl: number
   proxied: boolean
   proxiable: boolean
+  /** CF 托管锁定（如 Worker Custom Domain 绑定的记录，proxied 等不可改） */
+  locked?: boolean
   comment?: string
   tags?: string[]
   created_on: string

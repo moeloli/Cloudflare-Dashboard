@@ -11,6 +11,7 @@ import {
   Copy,
   Cloud,
   Loader2,
+  Lock,
 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -109,6 +110,13 @@ function gotoPage(n: number) {
 
 const FORM_TYPES: DNSRecordType[] = ['A', 'AAAA', 'CNAME', 'TXT', 'MX', 'NS', 'CAA', 'SRV', 'TLSA']
 
+/** CF 仅允许 A/AAAA/CNAME 开启代理（小黄云）；TXT/MX/NS/SRV/CAA/TLSA 等不支持代理 */
+const PROXIABLE_TYPES: DNSRecordType[] = ['A', 'AAAA', 'CNAME']
+
+function isProxiableType(t: DNSRecordType): boolean {
+  return PROXIABLE_TYPES.includes(t)
+}
+
 interface FormState {
   type: DNSRecordType
   name: string
@@ -137,6 +145,19 @@ const submitting = ref(false)
 const form = ref<FormState>(blankForm())
 
 const showPriority = computed(() => form.value.type === 'MX' || form.value.type === 'SRV')
+
+/** 小黄云是否可编辑：类型支持代理 且 当前编辑的记录未被 CF 锁定（Worker 绑定等） */
+const proxiedEditable = computed(
+  () => isProxiableType(form.value.type) && !editing.value?.locked,
+)
+
+/** 切换记录类型时，若新类型不支持代理，自动关闭小黄云（避免提交无效 proxied） */
+watch(
+  () => form.value.type,
+  (t) => {
+    if (!isProxiableType(t)) form.value.proxied = false
+  },
+)
 
 function openCreate() {
   editing.value = null
@@ -172,7 +193,11 @@ function buildPayload(): DNSRecordPayload[] {
     type: form.value.type,
     name: form.value.name.trim() || '@',
     ttl: form.value.ttlMode === 'auto' ? 1 : form.value.ttl,
-    proxied: form.value.proxied,
+  }
+  // 仅可代理类型且非锁定记录才提交 proxied（CF 对 TXT/MX 等不接受 proxied:true，
+  // 锁定记录——如 Worker Custom Domain 绑定——proxied 由 CF 托管不可改，提交会报错）
+  if (isProxiableType(form.value.type) && !editing.value?.locked) {
+    base.proxied = form.value.proxied
   }
   if (showPriority.value && form.value.priority != null) base.priority = form.value.priority
   return splitContent(form.value.content, form.value.type).map((c) => ({ ...base, content: c }))
@@ -220,8 +245,12 @@ async function submit() {
 const togglingId = ref<string | null>(null)
 
 async function toggleProxied(rec: DNSRecord) {
+  if (rec.locked) {
+    toast.error('该记录由 Cloudflare 托管锁定（如 Worker 自定义域），不可修改代理状态')
+    return
+  }
   if (!rec.proxiable) {
-    toast.error('该记录不支持代理')
+    toast.error('该记录类型不支持代理')
     return
   }
   togglingId.value = rec.id
@@ -234,6 +263,13 @@ async function toggleProxied(rec: DNSRecord) {
   } finally {
     togglingId.value = null
   }
+}
+
+/** 小黄云按钮的禁用原因（用于 title） */
+function proxiedDisableReason(rec: DNSRecord): string {
+  if (rec.locked) return '由 Cloudflare 托管锁定（Worker 自定义域等），不可修改'
+  if (!rec.proxiable) return '该记录类型不支持代理'
+  return '切换代理状态'
 }
 
 /* ---------------- 删除 ---------------- */
@@ -476,17 +512,21 @@ function typeClass(type: DNSRecordType): string {
             <button
               type="button"
               class="flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-50"
-              :disabled="!r.proxiable || togglingId === r.id"
-              :title="r.proxiable ? '切换代理状态' : '该类型不支持代理'"
+              :disabled="!r.proxiable || r.locked || togglingId === r.id"
+              :title="proxiedDisableReason(r)"
               @click="toggleProxied(r)"
             >
               <Cloud
                 class="size-4 transition"
-                :class="r.proxied ? 'text-amber-500' : 'text-muted-foreground/40'"
+                :class="[
+                  r.proxied ? 'text-amber-500' : 'text-muted-foreground/40',
+                  r.locked ? 'opacity-60' : '',
+                ]"
               />
               <span class="text-xs" :class="r.proxied ? 'text-amber-600' : 'text-muted-foreground'">
                 {{ r.proxied ? '已代理' : '仅 DNS' }}
               </span>
+              <Lock v-if="r.locked" class="size-3 text-muted-foreground" />
             </button>
           </div>
 
@@ -570,9 +610,15 @@ function typeClass(type: DNSRecordType): string {
                 <Cloud class="size-4" :class="form.proxied ? 'text-amber-500' : 'text-muted-foreground'" />
                 代理状态（小黄云）
               </div>
-              <p class="text-xs text-muted-foreground">开启后流量经 Cloudflare 代理</p>
+              <p v-if="editing?.locked" class="text-xs text-muted-foreground">
+                该记录由 Cloudflare 托管锁定（Worker 自定义域），代理状态不可修改
+              </p>
+              <p v-else-if="!proxiedEditable" class="text-xs text-muted-foreground">
+                当前记录类型不支持代理
+              </p>
+              <p v-else class="text-xs text-muted-foreground">开启后流量经 Cloudflare 代理</p>
             </div>
-            <Switch v-model:checked="form.proxied" />
+            <Switch v-model:checked="form.proxied" :disabled="!proxiedEditable" />
           </div>
 
           <div class="grid grid-cols-2 gap-3">
