@@ -90,8 +90,8 @@ onMounted(loadZones)
 const form = reactive({
   zoneId: '' as string,
   prefix: 'www', // 访问域名前缀，留空或 @ 表示根域
-  originMode: 'domain' as OriginMode, // 源站模式：domain=源站域名（Worker/已有域名）；ip=源站 IP（传统服务器）
-  originDomain: '', // domain 模式=源站域名(如 cloud-mail.workers.dev)；ip 模式=回源域名(账号下 zone 子域)
+  originMode: 'domain' as OriginMode, // 源站模式：domain=源站域名（非 CF 代理）；ip=源站 IP（传统服务器）
+  originDomain: '', // domain 模式=源站域名(非 CF 代理，如对象存储/CDN 域名)；ip 模式=回源域名(账号下 zone 子域)
   originIp: '', // 仅 ip 模式显示，源站真实 IP
   preferredDomain: DEFAULT_PREFERRED_DOMAIN,
 })
@@ -118,12 +118,12 @@ const originDomainLabel = computed(() =>
 )
 const originDomainPlaceholder = computed(() =>
   form.originMode === 'domain'
-    ? 'cloud-mail.workers.dev 或 mail.example.com'
+    ? 'origin.example.com 或 bucket.s3.amazonaws.com'
     : 'saas-origin.example.com',
 )
 const originDomainHint = computed(() =>
   form.originMode === 'domain'
-    ? '源站 Worker 域名或任意可达的源站域名，直接作为回源目标'
+    ? '源站已有公网域名（非 CF 代理，如对象存储/CDN/自建服务器域名），直接作为回源目标'
     : '账号下某 zone 的子域名，需可创建 A 记录，作为 fallback origin',
 )
 
@@ -417,7 +417,7 @@ function statusClass(status: string): string {
                   size="sm"
                   @click="form.originMode = 'domain'"
                 >
-                  源站域名（Worker/已有域名）
+                  源站域名（已有域名）
                 </Button>
                 <Button
                   :variant="form.originMode === 'ip' ? 'default' : 'outline'"
@@ -428,8 +428,14 @@ function statusClass(status: string): string {
                 </Button>
               </div>
               <p class="text-xs text-muted-foreground">
-                源站是 CF Worker 或已有公网域名时选「源站域名」，无需填 IP；源站是传统服务器只有 IP 时选「源站 IP」。
+                源站已有公网域名（非 CF 代理，如对象存储/CDN/自建服务器）选「源站域名」，无需填 IP；源站是传统服务器只有 IP 时选「源站 IP」。
               </p>
+              <Alert variant="destructive" class="py-2">
+                <AlertDescription class="text-xs">
+                  源站域名不能是 CF Worker 或 CF 代理域名（解析到 CF IP），否则 CF 报 Error 1000。
+                  源站是 CF Worker 请改用「一键加速」或直接给 Worker 绑自定义域。
+                </AlertDescription>
+              </Alert>
             </div>
 
             <!-- 回源域名 / 源站域名（label/placeholder/提示随模式变化） -->

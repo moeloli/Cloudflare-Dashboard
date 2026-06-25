@@ -7,9 +7,12 @@
  * 由 CF 边缘代理回源。
  *
  * 两种源站模式：
- * - domain 模式：源站已有公网域名（如 CF Worker 的 xxx.workers.dev、绑了自定义域的 Worker、
- *   对象存储域名等）。不需 A 记录、不需 IP，直接以源站域名作为 custom_origin_server。
+ * - domain 模式：源站已有公网域名（如非 CF 的对象存储/CDN 域名、自建服务器域名等）。
+ *   不需 A 记录、不需 IP，直接以源站域名作为 custom_origin_server。
  *   fallback_origin 与 custom_hostname 都挂在访问域名所属 zone（accessZone）上。
+ *   ⚠️ 限制：源站域名不能解析到 Cloudflare IP（即不能是 CF Worker / CF 代理域名），
+ *   否则 CF 报 Error 1000 DNS points to prohibited IP（SaaS 不允许回源到 CF 自己）。
+ *   源站是 CF Worker 请改用「一键加速」或直接给 Worker 绑自定义域。
  * - ip 模式：源站是传统服务器。在回源域名所属 zone（originZone）建 A/AAAA 记录指向源站 IP，
  *   fallback_origin 与 custom_hostname 挂在 originZone 上。
  *
@@ -39,18 +42,18 @@ export const PREFERRED_DOMAINS = ['cdn.cnno.de', 'cdn.ddeed.de'] as const
 /** 默认优选域名 */
 export const DEFAULT_PREFERRED_DOMAIN = 'cdn.cnno.de'
 
-/** 源站模式：domain=源站已有公网域名(如 CF Worker)；ip=源站是传统服务器需配 A 记录 */
+/** 源站模式：domain=源站已有公网域名(非 CF 代理)；ip=源站是传统服务器需配 A 记录 */
 export type OriginMode = 'domain' | 'ip'
 
 /** 部署配置 */
 export interface SaasDeployConfig {
   /** 访问域名（要加速的主机名，如 www.example.com 或 example.com） */
   accessDomain: string
-  /** 源站模式：domain=源站已有公网域名(如 CF Worker)；ip=源站是传统服务器需配 A 记录 */
+  /** 源站模式：domain=源站已有公网域名(非 CF 代理)；ip=源站是传统服务器需配 A 记录 */
   originMode: OriginMode
   /**
    * 回源目标域名：
-   * - domain 模式=源站域名(如 cloud-mail.workers.dev)，直接作为 custom_origin_server
+   * - domain 模式=源站域名(非 CF 代理，如对象存储/CDN/自建服务器域名)，直接作为 custom_origin_server
    * - ip 模式=账号下某 zone 子域(作为 fallback origin，其 A 记录指向 originIp)
    */
   originDomain: string
@@ -232,7 +235,7 @@ export async function listSaasDeployments(): Promise<SaasDeployment[]> {
  * 部署 SaaS 优选加速。
  *
  * 两种源站模式（对齐 cococ.co：两种模式都设 zone 级 fallback_origin）：
- * - domain 模式：源站已有公网域名（如 CF Worker 的 xxx.workers.dev）。
+ * - domain 模式：源站已有公网域名（非 CF 代理，如对象存储/CDN/自建服务器域名）。
  *   不需建 A 记录、不需 IP。fallback_origin 与 custom_hostname 都挂在 accessZone 上
  *   （源站域名通常不在用户账号下，无法挂在源站所属 zone）。
  * - ip 模式：源站是传统服务器。在 originZone（回源域名所属 zone）建 A 记录指向源站 IP，
