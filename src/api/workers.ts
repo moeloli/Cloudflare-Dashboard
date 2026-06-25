@@ -34,13 +34,14 @@ export const workersApi = {
     return res.text()
   },
 
-  /** 上传/更新脚本（纯脚本，无绑定）。用 application/javascript 模式。 */
+  /** 上传/更新脚本（ES Module 格式，export default { fetch }）。 */
   uploadScript: async (scriptName: string, script: string): Promise<void> => {
     const res = await fetch(
       `${BASE}/accounts/${accountId()}/workers/scripts/${scriptName}`,
       {
         method: 'PUT',
-        headers: { ...authHeaders(), 'Content-Type': 'application/javascript' },
+        // ES Module 脚本必须声明 +module，否则 CF 按 Service Worker 解析，遇 export 即语法错
+        headers: { ...authHeaders(), 'Content-Type': 'application/javascript+module' },
         body: script,
       },
     )
