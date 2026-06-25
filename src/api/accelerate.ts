@@ -13,6 +13,7 @@
 import { dnsApi } from './dns'
 import { zonesApi } from './zones'
 import { workersApi } from './workers'
+import { listCustomHostnames } from './saas'
 import type { DNSRecord, Zone } from '@/types/cloudflare'
 
 /** 优选回源域名候选 */
@@ -198,10 +199,20 @@ export async function detectAccelerated(
     } catch {
       continue
     }
+    // 预取该 zone 的 custom hostnames，命中 hostname 的记录归 SaaS 优选管，排除避免误判为加速记录
+    let saasHostnames = new Set<string>()
+    try {
+      const hosts = await listCustomHostnames(zone.id)
+      saasHostnames = new Set(hosts.map((h) => normalizeDomain(h.hostname)))
+    } catch {
+      // 取不到 custom hostnames 时降级：不排除（保持旧行为）
+    }
     for (const record of records) {
       const content = normalizeDomain(record.content)
       const hit = domains.some((d) => content === d || content.endsWith('.' + d))
       if (!hit) continue
+      // 已是 SaaS 优选 custom hostname 的访问域名，跳过（避免误判为 Worker 缺失的加速记录）
+      if (saasHostnames.has(normalizeDomain(record.name))) continue
       const workerName = generateWorkerName(record.name)
       results.push({
         zone,

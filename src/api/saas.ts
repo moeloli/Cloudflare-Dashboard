@@ -132,7 +132,7 @@ function findZoneForDomain(zones: Zone[], domain: string): Zone | undefined {
 /* ---------- custom_hostnames 基础 API ---------- */
 
 /** 列出 zone 下所有 custom hostnames */
-async function listCustomHostnames(zoneId: string): Promise<CustomHostname[]> {
+export async function listCustomHostnames(zoneId: string): Promise<CustomHostname[]> {
   // custom_hostnames 端点默认分页，per_page 拉满
   const all: CustomHostname[] = []
   let page = 1
@@ -402,20 +402,43 @@ export async function deploySaas(
  * fallback origin 为 zone 级单例，可能被其他主机名共用，故保留不删（保守，避免误伤）。
  * 单步失败不阻断，最终聚合错误。
  */
-export async function removeSaas(originDomain: string, originZoneId: string): Promise<void> {
+export async function removeSaas(originDomain: string, originZoneId: string, hostnames?: string[]): Promise<void> {
   const errors: string[] = []
 
   // ① 仅删除 custom_origin_server == originDomain 的 custom hostname
   //    （接入时已显式绑定回源域名，精确匹配避免误删同 zone 下其他 SaaS 接入）
+  //    hostnames 为可选的访问域名集合，进一步限定删除范围（用于只删指定记录而非该 origin 下全部）
   try {
     const hosts = await listCustomHostnames(originZoneId)
-    const matched = hosts.filter((h) => normalizeDomain(h.custom_origin_server ?? '') === normalizeDomain(originDomain))
+    const hostSet = hostnames?.map(normalizeDomain)
+    const matched = hosts.filter((h) => {
+      if (normalizeDomain(h.custom_origin_server ?? '') !== normalizeDomain(originDomain)) return false
+      if (hostSet && !hostSet.includes(normalizeDomain(h.hostname))) return false
+      return true
+    })
     await Promise.all(matched.map((h) => deleteCustomHostname(originZoneId, h.id)))
   } catch (e) {
     errors.push(`自定义主机名删除失败：${e instanceof Error ? e.message : String(e)}`)
   }
 
-  // ② 删除回源域名的 A/AAAA 记录
+  // ② 删除访问域名的 CNAME 记录（指向优选域名，comment 标记"SaaS 优选 CNAME"）
+  //    遍历 hostnames 所在 zone 清理；hostnames 缺省时跳过（无法定位访问域名 zone）
+  if (hostnames && hostnames.length) {
+    try {
+      const zones = await zonesApi.list({ per_page: 50 })
+      for (const hn of hostnames) {
+        const zone = findZoneForDomain(zones, hn)
+        if (!zone) continue
+        const records = await dnsApi.list(zone.id, { type: 'CNAME', name: hn })
+        const matched = records.filter((r) => r.comment === 'SaaS 优选 CNAME')
+        await Promise.all(matched.map((r) => dnsApi.delete(zone.id, r.id)))
+      }
+    } catch (e) {
+      errors.push(`访问域名 CNAME 删除失败：${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  // ③ 删除回源域名的 A/AAAA 记录（仅 ip 模式才建过；domain 模式 originDomain 不在账号下，匹配为空安全跳过）
   try {
     const records = await dnsApi.list(originZoneId, { name: originDomain })
     const matched = records.filter((r) => (r.type === 'A' || r.type === 'AAAA') && r.comment === 'SaaS 优选回源 A 记录')

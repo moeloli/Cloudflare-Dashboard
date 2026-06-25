@@ -285,7 +285,7 @@ async function confirmDelete() {
   if (!deleteTarget.value) return
   deleting.value = true
   try {
-    await removeSaas(deleteTarget.value.originDomain, deleteTarget.value.originZoneId)
+    await removeSaas(deleteTarget.value.originDomain, deleteTarget.value.originZoneId, [deleteTarget.value.hostname])
     toast.success('已移除 SaaS 优选部署')
     deleteTarget.value = null
     await loadDeployments()
