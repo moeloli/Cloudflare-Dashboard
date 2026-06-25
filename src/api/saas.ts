@@ -132,11 +132,14 @@ async function listCustomHostnames(zoneId: string): Promise<CustomHostname[]> {
   return all
 }
 
-/** 创建 custom hostname（接入访问域名） */
-function createCustomHostname(zoneId: string, hostname: string): Promise<CustomHostname> {
+/** 创建 custom hostname（接入访问域名，显式绑定回源域名） */
+function createCustomHostname(zoneId: string, hostname: string, originDomain: string): Promise<CustomHostname> {
   return http.post<CustomHostname>(`/zones/${zoneId}/custom_hostnames`, {
     body: {
       hostname,
+      // 显式绑定该 hostname 的回源域名，不依赖 zone 级 fallback origin 单例
+      // （多个 hostname 可各自回源到不同源站，删除时也能精确匹配）
+      custom_origin_server: originDomain,
       ssl: { method: 'http', type: 'dv', settings: { min_tls_version: '1.0' } },
     },
   })
@@ -188,8 +191,10 @@ export async function listSaasDeployments(): Promise<SaasDeployment[]> {
       } catch {
         return
       }
-      const originDomain = fallback?.origin ?? ''
+      const zoneFallback = fallback?.origin ?? ''
       for (const h of hosts) {
+        // 优先用 hostname 自带的 custom_origin_server,回退到 zone 级 fallback
+        const originDomain = h.custom_origin_server?.trim() || zoneFallback
         results.push({
           id: h.id,
           hostname: h.hostname,
@@ -283,7 +288,7 @@ export async function deploySaas(
   onProgress?.({ step: 'hostname', message: '正在接入访问域名（custom hostname）…', ok: true })
   let hostname: CustomHostname
   try {
-    hostname = await createCustomHostname(originZone.id, accessDomain)
+    hostname = await createCustomHostname(originZone.id, accessDomain, originDomain)
   } catch (e) {
     throw new Error(`接入访问域名失败：${e instanceof Error ? e.message : String(e)}（回退源与 A 记录已配置）`)
   }
@@ -351,11 +356,12 @@ export async function deploySaas(
 export async function removeSaas(originDomain: string, originZoneId: string): Promise<void> {
   const errors: string[] = []
 
-  // ① 删除该 zone 下所有 custom hostname（CF custom hostname 不绑定 origin，按 zone 整体清理）
-  //    注：更精确可只删 custom_origin_server==originDomain 的，但接入时未设该字段，故清理 zone 下全部。
+  // ① 仅删除 custom_origin_server == originDomain 的 custom hostname
+  //    （接入时已显式绑定回源域名，精确匹配避免误删同 zone 下其他 SaaS 接入）
   try {
     const hosts = await listCustomHostnames(originZoneId)
-    await Promise.all(hosts.map((h) => deleteCustomHostname(originZoneId, h.id)))
+    const matched = hosts.filter((h) => normalizeDomain(h.custom_origin_server ?? '') === normalizeDomain(originDomain))
+    await Promise.all(matched.map((h) => deleteCustomHostname(originZoneId, h.id)))
   } catch (e) {
     errors.push(`自定义主机名删除失败：${e instanceof Error ? e.message : String(e)}`)
   }
