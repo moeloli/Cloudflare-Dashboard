@@ -92,9 +92,10 @@ const REQ_HEADERS = [
   'content-type', 'content-length', 'user-agent', 'cache-control',
   'pragma', 'origin', 'referer', 'cookie', 'x-requested-with', 'range',
 ];
-// 回源响应头白名单：不透传 location，避免源站重定向把浏览器弹回源域名暴露源站
+// 回源响应头白名单：不透传 location(避免暴露源站)、content-length/content-encoding
+// (resp.body 是流,CF 用 chunked 传输,透传这俩会头体不符导致连接被掐 ERR_CONNECTION_CLOSED)
 const RESP_HEADERS = [
-  'content-type', 'content-encoding', 'content-length', 'content-disposition',
+  'content-type', 'content-disposition',
   'cache-control', 'etag', 'last-modified', 'expires', 'vary', 'set-cookie',
 ];
 
