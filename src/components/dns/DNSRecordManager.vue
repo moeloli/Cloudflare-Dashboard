@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
 import {
   Plus,
@@ -44,10 +44,45 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { dnsApi } from '@/api'
+import { dnsApi, workersApi, pagesApi } from '@/api'
 import type { DNSRecord, DNSRecordPayload, DNSRecordType } from '@/types/cloudflare'
 
 const props = defineProps<{ zoneId: string; zoneName?: string }>()
+
+/* ---------------- Worker/Pages 绑定域名（强制小黄云，不可关） ---------------- */
+
+/**
+ * Worker Custom Domain 与 Pages 自定义域名都强制 proxied=true，CF 不允许关闭。
+ * 这些记录 CF 不一定返回 locked=true，故额外拉账号维度的绑定 hostname 列表精确识别。
+ * 拉取失败降级为空集合，靠 toggleProxied 的 try/catch 兜底。
+ */
+const boundHostnames = ref<Set<string>>(new Set())
+
+function normalizeHost(s: string): string {
+  return s.replace(/\.$/, '').toLowerCase().trim()
+}
+
+async function loadBoundHostnames() {
+  try {
+    const [workerDomains, pagesProjects] = await Promise.all([
+      workersApi.listDomains().catch(() => []),
+      pagesApi.listProjects().catch(() => []),
+    ])
+    const set = new Set<string>()
+    for (const d of workerDomains) if (d.hostname) set.add(normalizeHost(d.hostname))
+    for (const p of pagesProjects) for (const dm of p.domains ?? []) set.add(normalizeHost(dm))
+    boundHostnames.value = set
+  } catch {
+    boundHostnames.value = new Set()
+  }
+}
+
+onMounted(loadBoundHostnames)
+
+/** 该记录是否为 Worker/Pages 绑定的强制代理域名 */
+function isBoundRecord(rec: DNSRecord): boolean {
+  return boundHostnames.value.has(normalizeHost(rec.name))
+}
 
 /* ---------------- 列表与加载 ---------------- */
 
@@ -146,10 +181,13 @@ const form = ref<FormState>(blankForm())
 
 const showPriority = computed(() => form.value.type === 'MX' || form.value.type === 'SRV')
 
-/** 小黄云是否可编辑：类型支持代理 且 当前编辑的记录未被 CF 锁定（Worker 绑定等） */
-const proxiedEditable = computed(
-  () => isProxiableType(form.value.type) && !editing.value?.locked,
-)
+/** 小黄云是否可编辑：类型支持代理 且 当前编辑的记录未被 CF 锁定 / 非 Worker·Pages 绑定 */
+const proxiedEditable = computed(() => {
+  if (!isProxiableType(form.value.type)) return false
+  if (editing.value?.locked) return false
+  if (editing.value && isBoundRecord(editing.value)) return false
+  return true
+})
 
 /** 切换记录类型时，若新类型不支持代理，自动关闭小黄云（避免提交无效 proxied） */
 watch(
@@ -196,7 +234,8 @@ function buildPayload(): DNSRecordPayload[] {
   }
   // 仅可代理类型且非锁定记录才提交 proxied（CF 对 TXT/MX 等不接受 proxied:true，
   // 锁定记录——如 Worker Custom Domain 绑定——proxied 由 CF 托管不可改，提交会报错）
-  if (isProxiableType(form.value.type) && !editing.value?.locked) {
+  const lockedRecord = !!editing.value?.locked || (editing.value ? isBoundRecord(editing.value) : false)
+  if (isProxiableType(form.value.type) && !lockedRecord) {
     base.proxied = form.value.proxied
   }
   if (showPriority.value && form.value.priority != null) base.priority = form.value.priority
@@ -246,7 +285,11 @@ const togglingId = ref<string | null>(null)
 
 async function toggleProxied(rec: DNSRecord) {
   if (rec.locked) {
-    toast.error('该记录由 Cloudflare 托管锁定（如 Worker 自定义域），不可修改代理状态')
+    toast.error('该记录由 Cloudflare 托管锁定，不可修改代理状态')
+    return
+  }
+  if (isBoundRecord(rec)) {
+    toast.error('该记录为 Worker / Pages 绑定的自定义域名，强制开启代理且不可关闭')
     return
   }
   if (!rec.proxiable) {
@@ -267,7 +310,8 @@ async function toggleProxied(rec: DNSRecord) {
 
 /** 小黄云按钮的禁用原因（用于 title） */
 function proxiedDisableReason(rec: DNSRecord): string {
-  if (rec.locked) return '由 Cloudflare 托管锁定（Worker 自定义域等），不可修改'
+  if (rec.locked) return '由 Cloudflare 托管锁定，不可修改'
+  if (isBoundRecord(rec)) return 'Worker / Pages 绑定的自定义域名，强制代理不可关闭'
   if (!rec.proxiable) return '该记录类型不支持代理'
   return '切换代理状态'
 }
@@ -512,7 +556,7 @@ function typeClass(type: DNSRecordType): string {
             <button
               type="button"
               class="flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-50"
-              :disabled="!r.proxiable || r.locked || togglingId === r.id"
+              :disabled="!r.proxiable || r.locked || isBoundRecord(r) || togglingId === r.id"
               :title="proxiedDisableReason(r)"
               @click="toggleProxied(r)"
             >
@@ -520,13 +564,13 @@ function typeClass(type: DNSRecordType): string {
                 class="size-4 transition"
                 :class="[
                   r.proxied ? 'text-amber-500' : 'text-muted-foreground/40',
-                  r.locked ? 'opacity-60' : '',
+                  r.locked || isBoundRecord(r) ? 'opacity-60' : '',
                 ]"
               />
               <span class="text-xs" :class="r.proxied ? 'text-amber-600' : 'text-muted-foreground'">
                 {{ r.proxied ? '已代理' : '仅 DNS' }}
               </span>
-              <Lock v-if="r.locked" class="size-3 text-muted-foreground" />
+              <Lock v-if="r.locked || isBoundRecord(r)" class="size-3 text-muted-foreground" />
             </button>
           </div>
 
@@ -611,7 +655,10 @@ function typeClass(type: DNSRecordType): string {
                 代理状态（小黄云）
               </div>
               <p v-if="editing?.locked" class="text-xs text-muted-foreground">
-                该记录由 Cloudflare 托管锁定（Worker 自定义域），代理状态不可修改
+                该记录由 Cloudflare 托管锁定，代理状态不可修改
+              </p>
+              <p v-else-if="editing && isBoundRecord(editing)" class="text-xs text-muted-foreground">
+                该记录为 Worker / Pages 绑定的自定义域名，强制开启代理且不可关闭
               </p>
               <p v-else-if="!proxiedEditable" class="text-xs text-muted-foreground">
                 当前记录类型不支持代理
