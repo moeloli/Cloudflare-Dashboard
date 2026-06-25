@@ -71,7 +71,9 @@ export function generateWorkerName(accessDomain: string): string {
 /**
  * 生成回源 Worker 脚本源码。
  *
- * 行为：把请求路径透传到源站 originUrl，可选用 Cache API 缓存 cacheTtl 秒。
+ * 纯透传：把请求路径透传到源站 originUrl。
+ * 不用 Cache API——子请求配额有限（50 次/请求），手搓缓存键易撞配额导致整页 500；
+ * 缓存交给 CF 边缘缓存 + 源站 Cache-Control 头，更稳。
  * 语法为 ES module 形式（Cloudflare Workers 标准）。
  */
 export function generateWorkerScript(originUrl: string, cacheTtl: number): string {
@@ -79,30 +81,19 @@ export function generateWorkerScript(originUrl: string, cacheTtl: number): strin
   return `/**
  * 一键加速 Worker（由 Cloudflare-Dashboard 生成）
  * 源站：${originUrl}
- * 缓存 TTL：${ttl} 秒（0 = 不缓存）
+ * 缓存 TTL：${ttl} 秒（0 = 不缓存，>0 时按 s-maxage 提示边缘缓存）
  */
 const ORIGIN_URL = ${JSON.stringify(originUrl)};
 const CACHE_TTL = ${ttl};
 
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request) {
     const reqUrl = new URL(request.url);
     const target = new URL(reqUrl.pathname + reqUrl.search, ORIGIN_URL);
 
-    const isCacheable =
-      CACHE_TTL > 0 && (request.method === 'GET' || request.method === 'HEAD');
-
-    // 命中缓存直接返回
-    if (isCacheable) {
-      const cache = caches.default;
-      const cached = await cache.match(request);
-      if (cached) return cached;
-    }
-
-    // 构造回源请求：修正 Host，GET/HEAD 不得带 body（Workers runtime 硬性规定，否则抛 TypeError → 1101）
+    // 构造回源请求：修正 Host，GET/HEAD 不得带 body（Workers runtime 硬性规定）
     const headers = new Headers(request.headers);
     headers.set('Host', target.host);
-    headers.set('Referer', target.origin + '/');
     const hasBody = request.method !== 'GET' && request.method !== 'HEAD' && request.body != null;
     const originReq = new Request(target, {
       method: request.method,
@@ -121,14 +112,11 @@ export default {
       });
     }
 
-    // 透传响应
-    if (isCacheable && resp.ok) {
-      const cache = caches.default;
-      const cached = new Response(resp.body, resp);
-      cached.headers.set('Cache-Control', 's-maxage=' + CACHE_TTL + ', max-age=0');
-      ctx.waitUntil(cache.put(request, cached.clone()));
+    // 透传响应；缓存仅靠 s-maxage 头提示，不在 Worker 内动 Cache API（省 subrequest 配额）
+    if (CACHE_TTL > 0 && resp.ok && (request.method === 'GET' || request.method === 'HEAD')) {
+      resp = new Response(resp.body, resp);
+      resp.headers.set('Cache-Control', 's-maxage=' + CACHE_TTL + ', max-age=0');
     }
-
     return resp;
   }
 }
