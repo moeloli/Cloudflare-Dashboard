@@ -52,9 +52,11 @@ export const workersApi = {
         { type: 'application/json' },
       ),
     )
+    // CF 用 part 的 filename（非 field name）识别 module，必须显式传 filename
     form.append(
       mainModule,
       new Blob([script], { type: 'application/javascript+module' }),
+      mainModule,
     )
     const res = await fetch(
       `${BASE}/accounts/${accountId()}/workers/scripts/${scriptName}`,
