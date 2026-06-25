@@ -99,15 +99,16 @@ export default {
       if (cached) return cached;
     }
 
-    // 构造回源请求，修正 Host
+    // 构造回源请求：修正 Host，GET/HEAD 不得带 body（Workers runtime 硬性规定，否则抛 TypeError → 1101）
     const headers = new Headers(request.headers);
     headers.set('Host', target.host);
     headers.set('Referer', target.origin + '/');
+    const hasBody = request.method !== 'GET' && request.method !== 'HEAD' && request.body != null;
     const originReq = new Request(target, {
       method: request.method,
       headers,
-      body: request.body,
-      redirect: 'manual',
+      body: hasBody ? request.body : undefined,
+      redirect: 'follow',
     });
 
     let resp;
