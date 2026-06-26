@@ -423,7 +423,8 @@ const countryOption = computed(() => {
         <CardContent>
           <VChart
             v-if="hasData"
-            class="h-72 w-full"
+            class="w-full"
+            style="height: 288px"
             :option="trendOption"
             autoresize
           />
@@ -460,7 +461,8 @@ const countryOption = computed(() => {
         <CardContent>
           <VChart
             v-if="countries.length"
-            class="h-80 w-full"
+            class="w-full"
+            style="height: 320px"
             :option="countryOption"
             autoresize
           />
