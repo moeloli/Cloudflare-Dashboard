@@ -292,12 +292,25 @@ function saveDraft() {
   editingPreset.value = null
 }
 
-function duplicatePreset(src: OptimizationPreset) {
-  const created = presetsStore.duplicatePreset(src)
-  // 选中新建的预设并打开编辑器，便于立刻改名改值
+/**
+ * 另存为：把下方「单项调节」区当前的实时配置值快照成一个新用户预设。
+ * 不弹窗选择 —— 基于当前 zone 实际配置直接落盘，新建后可点编辑按钮改名/调整。
+ */
+function saveCurrentAsPreset() {
+  const entries = SETTING_DEFS
+    .map((d) => [d.id, currentValue(d.id)] as const)
+    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+  if (!entries.length) {
+    toast.error('暂无可保存的配置', { description: '请先点右上角「刷新」加载当前配置值' })
+    return
+  }
+  const settings = Object.fromEntries(entries) as Record<string, SettingValue>
+  const name = `${zone.value?.name ?? '当前'} 的配置`
+  const created = presetsStore.createPreset(name, settings)
   selectedPresetId.value = created.id
-  openEditor(created)
-  toast.success(`已复制「${src.name}」为新预设，可直接改名`)
+  toast.success(`已将当前配置另存为「${name}」`, {
+    description: '可点编辑按钮改名或调整纳入项',
+  })
 }
 
 /** 待删除的预设（项目内 Dialog 二次确认，不用原生 confirm） */
@@ -492,8 +505,9 @@ function fmtDate(s: string | null): string {
             </div>
           </div>
           <div class="flex items-center gap-2">
-            <Button variant="ghost" size="icon" :disabled="loading" title="刷新域名信息" @click="load">
+            <Button variant="ghost" size="sm" :disabled="loading" @click="load">
               <RefreshCw class="size-4" :class="{ 'animate-spin': loading }" />
+              刷新
             </Button>
             <Button variant="outline" size="sm" class="text-destructive hover:text-destructive" @click="deleteOpen = true">
               <Trash2 class="size-4" />
@@ -594,8 +608,9 @@ function fmtDate(s: string | null): string {
                 </CardTitle>
                 <CardDescription>选择预设一键批量应用，或在下方逐项实时调节；自定义预设可改名、增删、全局保存</CardDescription>
               </div>
-              <Button variant="ghost" size="icon" :disabled="settingsLoading" title="刷新当前配置值" @click="loadZoneSettings">
+              <Button variant="ghost" size="sm" :disabled="settingsLoading" @click="loadZoneSettings">
                 <RefreshCw class="size-4" :class="{ 'animate-spin': settingsLoading }" />
+                刷新
               </Button>
             </CardHeader>
             <CardContent class="space-y-5">
@@ -620,7 +635,7 @@ function fmtDate(s: string | null): string {
                   <component :is="ShieldCheck" v-else class="size-4" />
                   应用
                 </Button>
-                <Button variant="outline" size="sm" :disabled="!selectedPreset" title="另存为新预设" @click="selectedPreset && duplicatePreset(selectedPreset)">
+                <Button variant="outline" size="sm" title="将当前配置另存为新预设" @click="saveCurrentAsPreset">
                   <Copy class="size-3.5" />
                   另存为
                 </Button>

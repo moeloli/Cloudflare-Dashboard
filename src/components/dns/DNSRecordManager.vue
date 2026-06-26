@@ -476,8 +476,9 @@ function typeClass(type: DNSRecordType): string {
       </Select>
 
       <div class="ml-auto flex items-center gap-2">
-        <Button variant="ghost" size="icon" :disabled="loading" title="刷新 DNS 记录" @click="load">
+        <Button variant="ghost" size="sm" :disabled="loading" @click="load">
           <RefreshCw class="size-4" :class="{ 'animate-spin': loading }" />
+          刷新
         </Button>
         <Button variant="outline" size="sm" :disabled="importing" @click="pickFile">
           <component :is="importing ? Loader2 : Upload" class="size-4" />
