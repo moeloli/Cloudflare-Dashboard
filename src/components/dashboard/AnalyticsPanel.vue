@@ -1,7 +1,5 @@
 <script setup lang="ts">
-import { createElement } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
 import {
   BarChart3,
@@ -13,6 +11,7 @@ import {
   RefreshCw,
   Activity,
 } from '@lucide/vue'
+import VChart from 'vue-echarts'
 import { zonesApi, zoneTraffic, zoneTopCountries } from '@/api'
 import type { Zone } from '@/types/cloudflare'
 import type { CountryRow, TimePoint, ZoneSummary } from '@/api/analytics'
@@ -27,8 +26,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-// recharts 图表（React 实现，见 analyticsCharts.jsx）
-import { TrendChart, CountryChart } from './analyticsCharts'
+import { setupECharts } from './echarts'
+
+setupECharts()
 
 /* ---------- 控件状态 ---------- */
 
@@ -108,7 +108,6 @@ async function loadAnalytics() {
 }
 
 onMounted(async () => {
-  mountReact()
   await loadZones()
   if (selectedZoneId.value) await loadAnalytics()
 })
@@ -155,46 +154,137 @@ const summaryCards = computed(() => {
   ]
 })
 
-/* ---------- React 图表挂载 ---------- */
+/* ---------- ECharts 配置（纯对象，配色走 CSS 变量） ---------- */
 
-const trendHost = ref<HTMLDivElement>()
-const countryHost = ref<HTMLDivElement>()
-let trendRoot: Root | null = null
-let countryRoot: Root | null = null
-
-function renderTrend() {
-  trendRoot?.render(
-    createElement(TrendChart, {
-      points: points.value,
-      loading: loading.value,
-      hasData: hasData.value,
-    }),
-  )
-}
-function renderCountry() {
-  countryRoot?.render(
-    createElement(CountryChart, {
-      countries: countries.value,
-      loading: loading.value,
-    }),
-  )
+/** 取 CSS 变量色值（fallback 到默认），供 ECharts 配色使用 */
+function cssVar(name: string, fallback: string): string {
+  if (typeof window === 'undefined') return fallback
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
 }
 
-function mountReact() {
-  if (trendHost.value && !trendRoot) trendRoot = createRoot(trendHost.value)
-  if (countryHost.value && !countryRoot) countryRoot = createRoot(countryHost.value)
-  renderTrend()
-  renderCountry()
+function fmtAxis(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`
+  return `${n}`
 }
 
-watch([points, loading, hasData], renderTrend, { flush: 'post' })
-watch([countries, loading], renderCountry, { flush: 'post' })
+/** 请求趋势图：双轴面积/折线（请求 + 流量），暗色适配 */
+const trendOption = computed(() => {
+  const colorPrimary = cssVar('--chart-1', '#5b8ff9')
+  const colorSecondary = cssVar('--chart-2', '#5ad8a6')
+  const colorMuted = cssVar('--muted-foreground', '#999')
+  const colorBorder = cssVar('--border', '#eee')
+  return {
+    animation: false,
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: cssVar('--popover', '#fff'),
+      borderColor: colorBorder,
+      textStyle: { color: cssVar('--popover-foreground', '#333'), fontSize: 12 },
+      formatter: (params: Array<{ data: TimePoint; axisValueLabel: string }>) => {
+        const p = params[0]?.data
+        if (!p) return ''
+        return `<div style="font-weight:600">${p.label}</div>
+          <div>请求 ${fmtNum(p.requests)}</div>
+          <div>流量 ${fmtBytes(p.bytes)}</div>
+          <div>威胁 ${fmtNum(p.threats)}</div>`
+      },
+    },
+    grid: { left: 48, right: 16, top: 16, bottom: 28 },
+    xAxis: {
+      type: 'category',
+      data: points.value.map((p) => p.label),
+      boundaryGap: false,
+      axisLine: { lineStyle: { color: colorBorder } },
+      axisLabel: { color: colorMuted, fontSize: 11, hideOverlap: true },
+      axisTick: { show: false },
+    },
+    yAxis: [
+      {
+        type: 'value',
+        name: '请求',
+        nameTextStyle: { color: colorMuted, fontSize: 10 },
+        axisLabel: { color: colorMuted, fontSize: 11, formatter: (v: number) => fmtAxis(v) },
+        splitLine: { lineStyle: { color: colorBorder, type: 'dashed' } },
+        axisLine: { show: false },
+        axisTick: { show: false },
+      },
+    ],
+    series: [
+      {
+        name: '请求',
+        type: 'line',
+        smooth: true,
+        showSymbol: false,
+        data: points.value.map((p) => p.requests),
+        lineStyle: { color: colorPrimary, width: 2 },
+        itemStyle: { color: colorPrimary },
+        areaStyle: {
+          color: {
+            type: 'linear',
+            x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [
+              { offset: 0, color: colorSecondary + '66' },
+              { offset: 1, color: colorSecondary + '00' },
+            ],
+          },
+        },
+      },
+    ],
+  }
+})
 
-onBeforeUnmount(() => {
-  trendRoot?.unmount()
-  countryRoot?.unmount()
-  trendRoot = null
-  countryRoot = null
+/** 国家分布：横向柱状图 */
+const countryOption = computed(() => {
+  const colorPrimary = cssVar('--chart-1', '#5b8ff9')
+  const colorMuted = cssVar('--muted-foreground', '#999')
+  const colorBorder = cssVar('--border', '#eee')
+  const rows = [...countries.value].reverse() // 反转使 Top1 在顶部
+  return {
+    animation: false,
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      backgroundColor: cssVar('--popover', '#fff'),
+      borderColor: colorBorder,
+      textStyle: { color: cssVar('--popover-foreground', '#333'), fontSize: 12 },
+      formatter: (params: Array<{ data: CountryRow; dataIndex: number }>) => {
+        const idx = params[0]?.dataIndex ?? 0
+        const c = rows[idx]
+        if (!c) return ''
+        return `<div style="font-weight:600">${c.country || 'Unknown'}</div>
+          <div>请求 ${fmtNum(c.requests)}</div>
+          <div>流量 ${fmtBytes(c.bytes)}</div>`
+      },
+    },
+    grid: { left: 96, right: 24, top: 8, bottom: 24 },
+    xAxis: {
+      type: 'value',
+      axisLabel: { color: colorMuted, fontSize: 11, formatter: (v: number) => fmtAxis(v) },
+      splitLine: { lineStyle: { color: colorBorder, type: 'dashed' } },
+      axisLine: { show: false },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'category',
+      data: rows.map((c) => c.country || 'Unknown'),
+      axisLabel: { color: colorMuted, fontSize: 12 },
+      axisLine: { show: false },
+      axisTick: { show: false },
+    },
+    series: [
+      {
+        type: 'bar',
+        data: rows.map((c) => c.requests),
+        itemStyle: {
+          color: colorPrimary,
+          borderRadius: [0, 4, 4, 0],
+        },
+        barMaxWidth: 18,
+      },
+    ],
+  }
 })
 </script>
 
@@ -303,7 +393,7 @@ onBeforeUnmount(() => {
         </CardContent>
       </Card>
 
-      <!-- 请求趋势图（recharts） -->
+      <!-- 请求趋势图（ECharts） -->
       <Card>
         <CardHeader class="pb-2">
           <div class="flex items-center justify-between">
@@ -314,12 +404,30 @@ onBeforeUnmount(() => {
           </div>
         </CardHeader>
         <CardContent>
-          <!-- React 图表挂载点；host 给固定高度，避免 ResponsiveContainer 初次探测为 0 不渲染 -->
-          <div ref="trendHost" class="h-64 w-full"></div>
+          <VChart
+            v-if="hasData"
+            class="h-72 w-full"
+            :option="trendOption"
+            autoresize
+          />
+          <div
+            v-else-if="loading"
+            class="flex h-72 items-end gap-1"
+          >
+            <Skeleton v-for="i in 24" :key="i" class="flex-1" :style="{ height: `${20 + ((i * 7) % 60)}%` }" />
+          </div>
+          <div
+            v-else
+            class="flex h-72 flex-col items-center justify-center gap-2 text-sm text-muted-foreground"
+          >
+            <BarChart3 class="size-8 opacity-40" />
+            <p>该时间范围内没有请求数据</p>
+            <p class="text-xs">尝试切换其他域名或扩大时间范围</p>
+          </div>
         </CardContent>
       </Card>
 
-      <!-- 流量来源 / 国家（recharts） -->
+      <!-- 流量来源 / 国家（ECharts） -->
       <Card>
         <CardHeader class="pb-2">
           <div class="flex items-center justify-between">
@@ -330,7 +438,22 @@ onBeforeUnmount(() => {
           </div>
         </CardHeader>
         <CardContent>
-          <div ref="countryHost" class="h-72 w-full"></div>
+          <VChart
+            v-if="countries.length"
+            class="h-80 w-full"
+            :option="countryOption"
+            autoresize
+          />
+          <div v-else-if="loading" class="space-y-3">
+            <Skeleton v-for="i in 6" :key="i" class="h-8 rounded" />
+          </div>
+          <div
+            v-else
+            class="flex h-80 flex-col items-center justify-center gap-2 text-sm text-muted-foreground"
+          >
+            <Globe class="size-8 opacity-40" />
+            <p>暂无国家分布数据</p>
+          </div>
         </CardContent>
       </Card>
     </template>
