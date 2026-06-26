@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import {
@@ -17,11 +17,24 @@ import {
   CheckCircle2,
   XCircle,
   Circle,
+  Plus,
+  Pencil,
+  SlidersHorizontal,
 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
+import { Label } from '@/components/ui/label'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
@@ -53,8 +66,21 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { zonesApi, OPTIMIZATION_PRESETS, applyOptimizationPreset } from '@/api'
-import type { OptimizationPreset, PresetItemResult } from '@/api'
+import {
+  zonesApi,
+  applyOptimizationPreset,
+  applySingleSetting,
+  listZoneSettings,
+  SETTING_DEFS,
+  getSettingDef,
+  type OptimizationPreset,
+  type PresetItemResult,
+  type ZoneSettingItem,
+  type SettingDef,
+  type SettingValue,
+  type MinifyValue,
+} from '@/api'
+import { usePresetsStore } from '@/stores/presets'
 import DNSRecordManager from '@/components/dns/DNSRecordManager.vue'
 import type { Zone } from '@/types/cloudflare'
 
@@ -78,6 +104,11 @@ async function load() {
 }
 
 onMounted(load)
+
+// 切到「配置预设」tab 时懒加载当前 zone settings（单项调节读当前值用）
+watch(activeTab, (t) => {
+  if (t === 'preset' && Object.keys(zoneSettings.value).length === 0) loadZoneSettings()
+})
 
 /* ---------------- 缓存管理 ---------------- */
 
@@ -112,28 +143,53 @@ async function toggleDevMode(on: boolean) {
 
 /* ---------------- 配置预设 ---------------- */
 
-const presetResults = ref<Record<string, PresetItemResult>>({})
-const applyingPreset = ref<string | null>(null)
+const presetsStore = usePresetsStore()
+const allPresets = computed(() => presetsStore.allPresets)
 
-function itemStatus(id: string): PresetItemResult | undefined {
-  return presetResults.value[id]
+/** 应用预设时的逐项结果（key=presetId, value={settingId: result}） */
+const applyResults = ref<Record<string, Record<string, PresetItemResult>>>({})
+const applyingPresetId = ref<string | null>(null)
+
+/** 单项调节：当前 zone 各 setting 实际值 */
+const zoneSettings = ref<Record<string, ZoneSettingItem>>({})
+const settingsLoading = ref(false)
+const singleApplying = ref<string | null>(null)
+
+async function loadZoneSettings() {
+  if (!zoneId.value) return
+  settingsLoading.value = true
+  try {
+    const list = await listZoneSettings(zoneId.value)
+    const map: Record<string, ZoneSettingItem> = {}
+    for (const s of list) map[s.id] = s
+    zoneSettings.value = map
+  } catch {
+    // 旧套餐可能不支持该列表端点，降级为空（单项调节仍可写，但读不到当前值）
+    zoneSettings.value = {}
+  } finally {
+    settingsLoading.value = false
+  }
+}
+
+/** 取某 setting 当前值（未读到时回退到内置预设的默认，便于展示） */
+function currentValue(id: string): SettingValue | undefined {
+  return zoneSettings.value[id]?.value
 }
 
 async function applyPreset(preset: OptimizationPreset) {
-  if (
-    !confirm(
-      `确认应用「${preset.name}」方案？\n\n将批量覆盖该域名下 ${preset.settings.length} 项配置，此操作不可撤销。\n如源站不支持 HTTPS，请勿使用「速度优先」（其 SSL 为灵活模式，明文回源）。`,
-    )
-  )
+  const count = Object.keys(preset.settings).length
+  if (!confirm(`确认应用「${preset.name}」？\n\n将批量覆盖该域名 ${count} 项配置，此操作不可撤销。`))
     return
-  applyingPreset.value = preset.key
-  // 重置该项结果，避免上次结果残留
+  applyingPresetId.value = preset.id
   const fresh: Record<string, PresetItemResult> = {}
-  for (const s of preset.settings) fresh[s.id] = { id: s.id, label: s.label, ok: false }
-  presetResults.value = fresh
+  for (const id of Object.keys(preset.settings)) fresh[id] = { id, ok: false }
+  applyResults.value = { ...applyResults.value, [preset.id]: fresh }
   try {
     const results = await applyOptimizationPreset(zoneId.value, preset, (r) => {
-      presetResults.value = { ...presetResults.value, [r.id]: r }
+      applyResults.value = {
+        ...applyResults.value,
+        [preset.id]: { ...applyResults.value[preset.id], [r.id]: r },
+      }
     })
     const okCount = results.filter((r) => r.ok).length
     const failCount = results.length - okCount
@@ -144,14 +200,191 @@ async function applyPreset(preset: OptimizationPreset) {
         description: `成功 ${okCount} 项，失败 ${failCount} 项（失败项多为当前套餐不支持该功能）`,
       })
     }
+    // 应用后刷新当前值
+    await loadZoneSettings()
   } catch (e) {
     toast.error('应用失败', { description: e instanceof Error ? e.message : String(e) })
   } finally {
-    applyingPreset.value = null
+    applyingPresetId.value = null
   }
 }
 
-/* ---------------- 复制 ---------------- */
+/** 单项调节：实时写一项 */
+async function applySingle(defId: string, value: SettingValue) {
+  singleApplying.value = defId
+  try {
+    await applySingleSetting(zoneId.value, defId, value)
+    // 本地乐观更新
+    zoneSettings.value = {
+      ...zoneSettings.value,
+      [defId]: { ...(zoneSettings.value[defId] ?? { id: defId, editable: true, modified_on: null }), value },
+    }
+    toast.success(`${getSettingDef(defId)?.label ?? defId} 已更新`)
+  } catch (e) {
+    toast.error('更新失败', { description: e instanceof Error ? e.message : String(e) })
+  } finally {
+    singleApplying.value = null
+  }
+}
+
+/* ---------------- 预设编辑器 ---------------- */
+
+const editorOpen = ref(false)
+const editingPreset = ref<OptimizationPreset | null>(null)
+/** 编辑中的工作副本（深拷贝，取消不影响原预设） */
+const editorDraft = ref<OptimizationPreset | null>(null)
+
+function openEditor(preset: OptimizationPreset) {
+  editingPreset.value = preset
+  editorDraft.value = structuredClone(preset)
+  editorOpen.value = true
+}
+
+function openNewPreset() {
+  const draft: OptimizationPreset = {
+    id: '', // 创建时由 store 生成
+    name: '我的预设',
+    builtin: false,
+    description: '',
+    settings: {},
+  }
+  editingPreset.value = null
+  editorDraft.value = draft
+  editorOpen.value = true
+}
+
+/** 切换某项是否纳入预设（勾选 = 纳入，并初始化为当前 zone 值或默认） */
+function toggleDraftSetting(defId: string, on: boolean) {
+  if (!editorDraft.value) return
+  const next = { ...editorDraft.value.settings }
+  if (on) {
+    if (!(defId in next)) {
+      const cur = currentValue(defId)
+      next[defId] = cur ?? defaultForSetting(defId)
+    }
+  } else {
+    delete next[defId]
+  }
+  editorDraft.value = { ...editorDraft.value, settings: next }
+}
+
+function setDraftValue(defId: string, value: SettingValue) {
+  if (!editorDraft.value) return
+  editorDraft.value = { ...editorDraft.value, settings: { ...editorDraft.value.settings, [defId]: value } }
+}
+
+function saveDraft() {
+  if (!editorDraft.value) return
+  const name = editorDraft.value.name.trim()
+  if (!name) {
+    toast.error('请填写预设名称')
+    return
+  }
+  if (editingPreset.value) {
+    // 编辑已有用户预设
+    presetsStore.updatePreset(editingPreset.value.id, {
+      name,
+      description: editorDraft.value.description,
+      settings: editorDraft.value.settings,
+    })
+    toast.success('预设已更新')
+  } else {
+    // 新建
+    presetsStore.createPreset(name, editorDraft.value.settings, editorDraft.value.description)
+    toast.success('预设已创建')
+  }
+  editorOpen.value = false
+  editorDraft.value = null
+  editingPreset.value = null
+}
+
+function duplicatePreset(src: OptimizationPreset) {
+  presetsStore.duplicatePreset(src)
+  toast.success(`已复制「${src.name}」为新预设`)
+}
+
+function deletePreset(preset: OptimizationPreset) {
+  if (!confirm(`确认删除自定义预设「${preset.name}」？此操作不可撤销。`)) return
+  presetsStore.deletePreset(preset.id)
+  toast.success('预设已删除')
+}
+
+/* ---------------- 展示辅助 ---------------- */
+
+/** 设置项的展示值（把 on/off / minify 对象转中文） */
+function displayValue(def: SettingDef, value: SettingValue | undefined): string {
+  if (value === undefined) return '—'
+  if (def.type === 'onoff') return value === 'on' ? '开' : '关'
+  if (def.type === 'minify' && typeof value === 'object' && value) {
+    const m = value as MinifyValue
+    const on: string[] = []
+    if (m.html === 'on') on.push('HTML')
+    if (m.css === 'on') on.push('CSS')
+    if (m.js === 'on') on.push('JS')
+    return on.length ? on.join('+') : '关'
+  }
+  if (def.type === 'number' && (def.id === 'browser_cache_ttl' || def.id === 'challenge_ttl')) {
+    return fmtSeconds(Number(value))
+  }
+  return String(value)
+}
+
+function defaultForSetting(defId: string): SettingValue {
+  const def = getSettingDef(defId)
+  if (!def) return 'off'
+  if (def.type === 'onoff') return 'off'
+  if (def.type === 'minify') return { html: 'off', css: 'off', js: 'off' } as MinifyValue
+  if (def.type === 'number') return def.numberOptions?.[0] ?? 0
+  return def.options?.[0] ?? ''
+}
+
+function fmtSeconds(sec: number): string {
+  if (sec <= 0) return '不缓存'
+  if (sec < 60) return `${sec} 秒`
+  if (sec < 3600) return `${Math.round(sec / 60)} 分钟`
+  if (sec < 86400) return `${Math.round(sec / 3600)} 小时`
+  if (sec < 2592000) return `${Math.round(sec / 86400)} 天`
+  if (sec < 31536000) return `${Math.round(sec / 2592000)} 个月`
+  return `${Math.round(sec / 31536000)} 年`
+}
+
+const SETTING_GROUPS: { key: SettingDef['group']; label: string }[] = [
+  { key: 'ssl', label: 'SSL / HTTPS' },
+  { key: 'security', label: '安全防护' },
+  { key: 'cache', label: '缓存' },
+  { key: 'speed', label: '速度优化' },
+]
+/** 取某预设某项的应用结果（供模板渲染） */
+function presetResult(presetId: string, settingId: string): PresetItemResult | undefined {
+  return applyResults.value[presetId]?.[settingId]
+}
+
+/** 单项调节：minify 子项切换（html/css/js 各自 on/off） */
+function toggleMinify(defId: string, key: 'html' | 'css' | 'js') {
+  const cur = currentValue(defId) as MinifyValue | undefined
+  const next: MinifyValue = {
+    html: cur?.html ?? 'off',
+    css: cur?.css ?? 'off',
+    js: cur?.js ?? 'off',
+  }
+  next[key] = next[key] === 'on' ? 'off' : 'on'
+  applySingle(defId, next)
+}
+
+/** 编辑器草稿：minify 子项切换 */
+function toggleDraftMinify(defId: string, key: 'html' | 'css' | 'js') {
+  if (!editorDraft.value) return
+  const cur = editorDraft.value.settings[defId] as MinifyValue | undefined
+  const next: MinifyValue = {
+    html: cur?.html ?? 'off',
+    css: cur?.css ?? 'off',
+    js: cur?.js ?? 'off',
+  }
+  next[key] = next[key] === 'on' ? 'off' : 'on'
+  setDraftValue(defId, next)
+}
+
+
 
 async function copy(text: string, label = '内容') {
   try {
@@ -383,58 +616,281 @@ function fmtDate(s: string | null): string {
 
       <!-- 配置预设 -->
       <TabsContent value="preset" class="mt-4">
-        <div class="space-y-3">
-          <p class="text-sm text-muted-foreground">
-            选择方向一键批量应用一组 zone 配置；单项失败（如套餐不支持该功能）不阻断其余项，结束后会汇总成功/失败数。
-          </p>
+        <div class="space-y-6">
+          <!-- 说明 + 新建 -->
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <p class="text-sm text-muted-foreground">
+              预设是一组 zone 配置的批量方案：内置两套只读，可基于它们「另存为」自定义预设，自由改名改值，全局保存。
+            </p>
+            <Button size="sm" @click="openNewPreset">
+              <Plus class="size-4" />
+              新建预设
+            </Button>
+          </div>
+
+          <!-- 预设卡片 -->
           <div class="grid gap-4 md:grid-cols-2">
-            <Card v-for="preset in OPTIMIZATION_PRESETS" :key="preset.key">
+            <Card v-for="preset in allPresets" :key="preset.id">
               <CardHeader>
-                <CardTitle class="flex items-center gap-2 text-base">
-                  <component
-                    :is="preset.key === 'speed' ? Rocket : ShieldCheck"
-                    class="size-4"
-                    :class="preset.key === 'speed' ? 'text-amber-500' : 'text-primary'"
-                  />
-                  {{ preset.name }}
-                </CardTitle>
-                <CardDescription>{{ preset.description }}</CardDescription>
+                <div class="flex items-start justify-between gap-2">
+                  <div class="min-w-0">
+                    <CardTitle class="flex items-center gap-2 text-base">
+                      <component
+                        :is="preset.id === 'builtin:speed' ? Rocket : ShieldCheck"
+                        class="size-4 shrink-0"
+                        :class="preset.id === 'builtin:speed' ? 'text-amber-500' : 'text-primary'"
+                      />
+                      <span class="truncate">{{ preset.name }}</span>
+                      <Badge v-if="preset.builtin" variant="outline" class="text-[10px]">内置</Badge>
+                    </CardTitle>
+                    <CardDescription v-if="preset.description" class="mt-1">{{ preset.description }}</CardDescription>
+                  </div>
+                </div>
               </CardHeader>
               <CardContent class="space-y-3">
                 <Alert v-if="preset.warning" variant="destructive" class="py-2">
                   <AlertDescription class="text-xs">{{ preset.warning }}</AlertDescription>
                 </Alert>
-                <ul class="space-y-1.5">
-                  <li v-for="s in preset.settings" :key="s.id" class="flex items-start gap-2 text-xs">
-                    <component
-                      :is="itemStatus(s.id)?.ok ? CheckCircle2 : itemStatus(s.id) ? XCircle : Circle"
-                      class="mt-0.5 size-3.5 shrink-0"
-                      :class="itemStatus(s.id)?.ok ? 'text-emerald-500' : itemStatus(s.id) ? 'text-destructive' : 'text-muted-foreground'"
-                    />
-                    <span class="flex-1">
-                      {{ s.label }}
-                      <span
-                        v-if="itemStatus(s.id)?.error"
-                        :title="itemStatus(s.id)?.error"
-                        class="ml-1 text-destructive/70"
-                      >（失败）</span>
+                <ul class="space-y-1">
+                  <li
+                    v-for="(value, sid) in preset.settings"
+                    :key="sid"
+                    class="flex items-center justify-between gap-2 text-xs"
+                  >
+                    <span class="flex items-center gap-1.5 text-muted-foreground">
+                      <component
+                        :is="presetResult(preset.id, String(sid))?.ok ? CheckCircle2 : presetResult(preset.id, String(sid)) ? XCircle : Circle"
+                        class="size-3.5 shrink-0"
+                        :class="presetResult(preset.id, String(sid))?.ok ? 'text-emerald-500' : presetResult(preset.id, String(sid)) ? 'text-destructive' : 'text-muted-foreground/40'"
+                      />
+                      {{ getSettingDef(String(sid))?.label ?? sid }}
                     </span>
+                    <span class="text-muted-foreground">{{ displayValue(getSettingDef(String(sid))!, value) }}</span>
                   </li>
                 </ul>
-                <Button class="w-full" :disabled="!!applyingPreset" @click="applyPreset(preset)">
-                  <Loader2 v-if="applyingPreset === preset.key" class="size-4 animate-spin" />
-                  <component
-                    :is="preset.key === 'speed' ? Rocket : ShieldCheck"
-                    v-else
-                    class="size-4"
-                  />
-                  应用此方案
-                </Button>
+                <div class="flex flex-wrap gap-2 pt-1">
+                  <Button class="flex-1" :disabled="!!applyingPresetId" @click="applyPreset(preset)">
+                    <Loader2 v-if="applyingPresetId === preset.id" class="size-4 animate-spin" />
+                    <component
+                      :is="preset.id === 'builtin:speed' ? Rocket : ShieldCheck"
+                      v-else
+                      class="size-4"
+                    />
+                    应用
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    :disabled="!!applyingPresetId"
+                    title="复制为新预设"
+                    @click="duplicatePreset(preset)"
+                  >
+                    <Copy class="size-3.5" />
+                    另存为
+                  </Button>
+                  <Button
+                    v-if="!preset.builtin"
+                    variant="outline"
+                    size="sm"
+                    title="编辑预设"
+                    @click="openEditor(preset)"
+                  >
+                    <Pencil class="size-3.5" />
+                  </Button>
+                  <Button
+                    v-if="!preset.builtin"
+                    variant="ghost"
+                    size="sm"
+                    class="text-destructive hover:text-destructive"
+                    title="删除预设"
+                    @click="deletePreset(preset)"
+                  >
+                    <Trash2 class="size-3.5" />
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           </div>
+
+          <!-- 单项调节 -->
+          <Card>
+            <CardHeader class="flex-row items-center justify-between space-y-0">
+              <div>
+                <CardTitle class="flex items-center gap-2 text-base">
+                  <SlidersHorizontal class="size-4 text-primary" />
+                  单项调节
+                </CardTitle>
+                <CardDescription>实时读取当前值并单独修改，改一项立即生效</CardDescription>
+              </div>
+              <Button variant="outline" size="sm" :disabled="settingsLoading" @click="loadZoneSettings">
+                <RefreshCw class="size-4" :class="{ 'animate-spin': settingsLoading }" />
+                刷新当前值
+              </Button>
+            </CardHeader>
+            <CardContent class="space-y-5">
+              <div v-for="g in SETTING_GROUPS" :key="g.key">
+                <div class="mb-2 text-xs font-medium text-muted-foreground">{{ g.label }}</div>
+                <div class="grid gap-2 sm:grid-cols-2">
+                  <div
+                    v-for="def in SETTING_DEFS.filter((d) => d.group === g.key)"
+                    :key="def.id"
+                    class="flex items-center justify-between gap-3 rounded-lg border p-3"
+                  >
+                    <div class="min-w-0">
+                      <div class="flex items-center gap-1.5 text-sm">
+                        {{ def.label }}
+                        <Badge v-if="def.requiresPro" variant="outline" class="text-[10px]">Pro</Badge>
+                      </div>
+                      <div class="truncate text-xs text-muted-foreground">
+                        当前：{{ displayValue(def, currentValue(def.id)) }}
+                      </div>
+                    </div>
+                    <!-- onoff -->
+                    <Switch
+                      v-if="def.type === 'onoff'"
+                      :model-value="currentValue(def.id) === 'on'"
+                      :disabled="singleApplying === def.id"
+                      @update:model-value="(v) => applySingle(def.id, v ? 'on' : 'off')"
+                    />
+                    <!-- select / security_level -->
+                    <Select
+                      v-else-if="def.type === 'select' || def.type === 'security_level'"
+                      :model-value="String(currentValue(def.id) ?? '')"
+                      :disabled="singleApplying === def.id"
+                      @update:model-value="(v) => applySingle(def.id, String(v))"
+                    >
+                      <SelectTrigger class="w-36">
+                        <SelectValue placeholder="选择" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem v-for="o in def.options" :key="o" :value="o">{{ o }}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <!-- number（枚举秒数） -->
+                    <Select
+                      v-else-if="def.type === 'number'"
+                      :model-value="String(currentValue(def.id) ?? '')"
+                      :disabled="singleApplying === def.id"
+                      @update:model-value="(v) => applySingle(def.id, Number(v))"
+                    >
+                      <SelectTrigger class="w-36">
+                        <SelectValue placeholder="选择" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem v-for="o in def.numberOptions" :key="o" :value="String(o)">
+                          {{ fmtSeconds(o) }}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <!-- minify -->
+                    <div v-else-if="def.type === 'minify'" class="flex gap-1">
+                      <Button
+                        v-for="k in (['html', 'css', 'js'] as const)"
+                        :key="k"
+                        :variant="(currentValue(def.id) as MinifyValue | undefined)?.[k] === 'on' ? 'default' : 'outline'"
+                        size="sm"
+                        class="h-7 px-2 text-xs"
+                        :disabled="singleApplying === def.id"
+                        @click="toggleMinify(def.id, k)"
+                      >
+                        {{ k.toUpperCase() }}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </TabsContent>
+
+      <!-- 预设编辑器 -->
+      <Dialog v-model:open="editorOpen">
+        <DialogContent class="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{{ editingPreset ? '编辑预设' : '新建预设' }}</DialogTitle>
+            <DialogDescription>勾选要纳入预设的配置项并设置目标值，保存后全局可用</DialogDescription>
+          </DialogHeader>
+          <div v-if="editorDraft" class="space-y-4">
+            <div class="grid gap-3 sm:grid-cols-2">
+              <div class="space-y-1.5">
+                <Label>预设名称</Label>
+                <Input v-model="editorDraft.name" placeholder="如 我的站点加速" />
+              </div>
+              <div class="space-y-1.5">
+                <Label>描述（可选）</Label>
+                <Input v-model="editorDraft.description" placeholder="一句话说明" />
+              </div>
+            </div>
+            <div class="max-h-[50vh] space-y-4 overflow-y-auto rounded-lg border p-3">
+              <div v-for="g in SETTING_GROUPS" :key="g.key">
+                <div class="mb-2 text-xs font-medium text-muted-foreground">{{ g.label }}</div>
+                <div class="space-y-2">
+                  <div
+                    v-for="def in SETTING_DEFS.filter((d) => d.group === g.key)"
+                    :key="def.id"
+                    class="flex items-center justify-between gap-3 rounded-md border p-2"
+                  >
+                    <div class="flex items-center gap-2">
+                      <Checkbox
+                        :model-value="def.id in editorDraft.settings"
+                        @update:model-value="(v) => toggleDraftSetting(def.id, v === true)"
+                      />
+                      <span class="text-sm">{{ def.label }}</span>
+                      <Badge v-if="def.requiresPro" variant="outline" class="text-[10px]">Pro</Badge>
+                    </div>
+                    <div v-if="def.id in editorDraft.settings" class="flex items-center gap-2">
+                      <Switch
+                        v-if="def.type === 'onoff'"
+                        :model-value="editorDraft.settings[def.id] === 'on'"
+                        @update:model-value="(v) => setDraftValue(def.id, v ? 'on' : 'off')"
+                      />
+                      <Select
+                        v-else-if="def.type === 'select' || def.type === 'security_level'"
+                        :model-value="String(editorDraft.settings[def.id] ?? '')"
+                        @update:model-value="(v) => setDraftValue(def.id, String(v))"
+                      >
+                        <SelectTrigger class="w-32"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem v-for="o in def.options" :key="o" :value="o">{{ o }}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Select
+                        v-else-if="def.type === 'number'"
+                        :model-value="String(editorDraft.settings[def.id] ?? '')"
+                        @update:model-value="(v) => setDraftValue(def.id, Number(v))"
+                      >
+                        <SelectTrigger class="w-32"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem v-for="o in def.numberOptions" :key="o" :value="String(o)">
+                            {{ fmtSeconds(o) }}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <div v-else-if="def.type === 'minify'" class="flex gap-1">
+                        <Button
+                          v-for="k in (['html', 'css', 'js'] as const)"
+                          :key="k"
+                          :variant="(editorDraft.settings[def.id] as MinifyValue)?.[k] === 'on' ? 'default' : 'outline'"
+                          size="sm"
+                          class="h-7 px-2 text-xs"
+                          @click="toggleDraftMinify(def.id, k)"
+                        >
+                          {{ k.toUpperCase() }}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" @click="editorOpen = false">取消</Button>
+            <Button @click="saveDraft">保存预设</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <!-- 概览 -->
       <TabsContent value="overview" class="mt-4">
