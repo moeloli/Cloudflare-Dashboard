@@ -199,6 +199,8 @@ const trendOption = computed(() => {
       backgroundColor: cssVar('--popover', '#fff'),
       borderColor: colorBorder,
       textStyle: { color: cssVar('--popover-foreground', '#333'), fontSize: 12 },
+      // 关闭 axisPointer 触发的 emphasis 淡出（showSymbol:false 时已知 bug，hover 点会消失）
+      axisPointer: { type: 'line', triggerEmphasis: false },
       formatter: (params: Array<{ data: TimePoint }>) => {
         const p = params[0]?.data as unknown as TimePoint | undefined
         if (!p) return ''
@@ -238,6 +240,8 @@ const trendOption = computed(() => {
         data: points.value.map((p) => ({ value: p.requests, ...p })),
         lineStyle: { color: colorPrimary, width: 2 },
         itemStyle: { color: colorPrimary },
+        // 禁用 emphasis 聚焦淡出（showSymbol:false hover 点消失已知 bug）
+        emphasis: { focus: 'none' },
         areaStyle: {
           color: {
             type: 'linear',
@@ -298,6 +302,7 @@ const countryOption = computed(() => {
           color: colorPrimary,
           borderRadius: [0, 4, 4, 0],
         },
+        emphasis: { focus: 'none' },
         barMaxWidth: 18,
       },
     ],
