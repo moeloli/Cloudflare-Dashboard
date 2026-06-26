@@ -22,8 +22,11 @@ function authHeaders(): Record<string, string> {
 export type R2Location = R2Bucket['location']
 
 export const r2Api = {
-  /** 列出账号下所有 R2 桶 */
-  listBuckets: () => http.get<R2Bucket[]>(`/accounts/${accountId()}/r2/buckets`),
+  /** 列出账号下所有 R2 桶（CF 返回 result 为 { buckets: [...] } 对象，需解包） */
+  listBuckets: async (): Promise<R2Bucket[]> => {
+    const res = await http.get<{ buckets?: R2Bucket[] }>(`/accounts/${accountId()}/r2/buckets`)
+    return res?.buckets ?? []
+  },
 
   /** 创建桶 */
   createBucket: (name: string, locationHint?: R2Location) =>
