@@ -223,6 +223,12 @@ const editingPreset = ref<OptimizationPreset | null>(null)
 const editorDraft = ref<OptimizationPreset | null>(null)
 
 function openEditor(preset: OptimizationPreset) {
+  // 内置预设只读：编辑时自动另存为用户预设副本，再编辑该副本（保存即更新副本）
+  if (preset.builtin) {
+    const copy = presetsStore.duplicatePreset(preset)
+    selectedPresetId.value = copy.id
+    preset = copy
+  }
   editingPreset.value = preset
   editorDraft.value = structuredClone(preset)
   editorOpen.value = true
@@ -287,14 +293,36 @@ function saveDraft() {
 }
 
 function duplicatePreset(src: OptimizationPreset) {
-  presetsStore.duplicatePreset(src)
-  toast.success(`已复制「${src.name}」为新预设`)
+  const created = presetsStore.duplicatePreset(src)
+  // 选中新建的预设并打开编辑器，便于立刻改名改值
+  selectedPresetId.value = created.id
+  openEditor(created)
+  toast.success(`已复制「${src.name}」为新预设，可直接改名`)
 }
 
+/** 待删除的预设（项目内 Dialog 二次确认，不用原生 confirm） */
+const presetDeleteTarget = ref<OptimizationPreset | null>(null)
+const presetDeleting = ref(false)
+
 function deletePreset(preset: OptimizationPreset) {
-  if (!confirm(`确认删除自定义预设「${preset.name}」？此操作不可撤销。`)) return
-  presetsStore.deletePreset(preset.id)
-  toast.success('预设已删除')
+  presetDeleteTarget.value = preset
+}
+
+async function confirmDeletePreset() {
+  if (!presetDeleteTarget.value) return
+  presetDeleting.value = true
+  try {
+    const id = presetDeleteTarget.value.id
+    presetsStore.deletePreset(id)
+    // 删的是当前选中预设则回退到第一个
+    if (selectedPresetId.value === id) {
+      selectedPresetId.value = allPresets.value[0]?.id ?? ''
+    }
+    toast.success('预设已删除')
+    presetDeleteTarget.value = null
+  } finally {
+    presetDeleting.value = false
+  }
 }
 
 /* ---------------- 展示辅助 ---------------- */
@@ -596,7 +624,7 @@ function fmtDate(s: string | null): string {
                   <Copy class="size-3.5" />
                   另存为
                 </Button>
-                <Button v-if="selectedPreset && !selectedPreset.builtin" variant="outline" size="sm" title="编辑预设" @click="selectedPreset && openEditor(selectedPreset)">
+                <Button v-if="selectedPreset" variant="outline" size="sm" :title="selectedPreset.builtin ? '另存为副本并编辑' : '编辑预设'" @click="selectedPreset && openEditor(selectedPreset)">
                   <Pencil class="size-3.5" />
                 </Button>
                 <Button v-if="selectedPreset && !selectedPreset.builtin" variant="ghost" size="sm" class="text-destructive hover:text-destructive" title="删除预设" @click="selectedPreset && deletePreset(selectedPreset)">
@@ -884,6 +912,30 @@ function fmtDate(s: string | null): string {
           <Button variant="outline" @click="deleteOpen = false">取消</Button>
           <Button variant="destructive" :disabled="deleting" @click="confirmDelete">
             <Loader2 v-if="deleting" class="size-4 animate-spin" />
+            确认删除
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <!-- 删除预设确认 -->
+    <Dialog
+      :open="!!presetDeleteTarget"
+      @update:open="(v) => { if (!v) presetDeleteTarget = null }"
+    >
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>删除预设</DialogTitle>
+          <DialogDescription>
+            确认删除自定义预设
+            <span class="font-medium text-foreground">{{ presetDeleteTarget?.name }}</span>？
+            删除后该预设将不再可用，此操作不可撤销。
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" @click="presetDeleteTarget = null">取消</Button>
+          <Button variant="destructive" :disabled="presetDeleting" @click="confirmDeletePreset">
+            <Loader2 v-if="presetDeleting" class="size-4 animate-spin" />
             确认删除
           </Button>
         </DialogFooter>
