@@ -600,18 +600,12 @@ function fmtDate(s: string | null): string {
         <div class="space-y-6">
           <!-- 单项调节（含预设快速应用） -->
           <Card>
-            <CardHeader class="flex-row items-center justify-between space-y-0">
-              <div>
-                <CardTitle class="flex items-center gap-2 text-base">
-                  <SlidersHorizontal class="size-4 text-primary" />
-                  配置预设与单项调节
-                </CardTitle>
-                <CardDescription>选择预设一键批量应用，或在下方逐项实时调节；自定义预设可改名、增删、全局保存</CardDescription>
-              </div>
-              <Button variant="ghost" size="sm" :disabled="settingsLoading" @click="loadZoneSettings">
-                <RefreshCw class="size-4" :class="{ 'animate-spin': settingsLoading }" />
-                刷新
-              </Button>
+            <CardHeader>
+              <CardTitle class="flex items-center gap-2 text-base">
+                <SlidersHorizontal class="size-4 text-primary" />
+                配置预设与单项调节
+              </CardTitle>
+              <CardDescription>选择预设一键批量应用，或在下方逐项实时调节；自定义预设可改名、增删、全局保存</CardDescription>
             </CardHeader>
             <CardContent class="space-y-5">
               <!-- 快速应用预设 -->
@@ -655,6 +649,15 @@ function fmtDate(s: string | null): string {
               <Alert v-if="selectedPreset?.warning" variant="destructive" class="py-2">
                 <AlertDescription class="text-xs">{{ selectedPreset.warning }}</AlertDescription>
               </Alert>
+
+              <!-- 单项调节区：刷新按钮置于该区右上角 -->
+              <div class="flex items-center justify-between">
+                <div class="text-xs font-medium text-muted-foreground">单项实时调节</div>
+                <Button variant="ghost" size="sm" :disabled="settingsLoading" @click="loadZoneSettings">
+                  <RefreshCw class="size-4" :class="{ 'animate-spin': settingsLoading }" />
+                  刷新
+                </Button>
+              </div>
 
               <div v-for="g in SETTING_GROUPS" :key="g.key">
                 <div class="mb-2 text-xs font-medium text-muted-foreground">{{ g.label }}</div>
