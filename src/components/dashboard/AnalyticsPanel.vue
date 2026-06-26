@@ -199,8 +199,8 @@ const trendOption = computed(() => {
       backgroundColor: cssVar('--popover', '#fff'),
       borderColor: colorBorder,
       textStyle: { color: cssVar('--popover-foreground', '#333'), fontSize: 12 },
-      formatter: (params: Array<{ data: TimePoint; axisValueLabel: string }>) => {
-        const p = params[0]?.data
+      formatter: (params: Array<{ data: TimePoint }>) => {
+        const p = params[0]?.data as unknown as TimePoint | undefined
         if (!p) return ''
         return `<div style="font-weight:600">${p.label}</div>
           <div>请求 ${fmtNum(p.requests)}</div>
@@ -234,7 +234,8 @@ const trendOption = computed(() => {
         type: 'line',
         smooth: true,
         showSymbol: false,
-        data: points.value.map((p) => p.requests),
+        // data 用对象数组：value 为 Y 值，其余字段供 tooltip formatter 读取
+        data: points.value.map((p) => ({ value: p.requests, ...p })),
         lineStyle: { color: colorPrimary, width: 2 },
         itemStyle: { color: colorPrimary },
         areaStyle: {
@@ -266,9 +267,8 @@ const countryOption = computed(() => {
       backgroundColor: cssVar('--popover', '#fff'),
       borderColor: colorBorder,
       textStyle: { color: cssVar('--popover-foreground', '#333'), fontSize: 12 },
-      formatter: (params: Array<{ data: CountryRow; dataIndex: number }>) => {
-        const idx = params[0]?.dataIndex ?? 0
-        const c = rows[idx]
+      formatter: (params: Array<{ data: CountryRow }>) => {
+        const c = params[0]?.data as unknown as CountryRow | undefined
         if (!c) return ''
         return `<div style="font-weight:600">${c.country || 'Unknown'}</div>
           <div>请求 ${fmtNum(c.requests)}</div>
@@ -293,7 +293,7 @@ const countryOption = computed(() => {
     series: [
       {
         type: 'bar',
-        data: rows.map((c) => c.requests),
+        data: rows.map((c) => ({ value: c.requests, ...c })),
         itemStyle: {
           color: colorPrimary,
           borderRadius: [0, 4, 4, 0],
