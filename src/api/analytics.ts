@@ -331,24 +331,31 @@ export async function zoneSummary(
  * 按 clientCountryName 聚合 Top N 国家。
  *
  * 注意：clientCountryName 维度只在 httpRequestsAdaptiveGroups（按需查询的明细集）
- * 中存在，1dGroups/1hGroups rollup 集不提供国家维度。因此国家分布必须走
- * AdaptiveGroups：用 count 计请求数、sum.edgeResponseBytes 计流量，按
- * clientCountryName 维度 + orderBy count_DESC 拿 Top N。
+ * 中存在，1dGroups/1hGroups rollup 集不提供国家维度。AdaptiveGroups 免费版
+ * 时间范围硬限 ≤ 1 天（超限返回 quota 错误），故传入的时间范围会自动裁剪到
+ * 「最近 24 小时」以确保可用——这是 CF 套餐的客观限制，无法绕过。
  *
- * Adaptive 集对免费 zone 有采样，但官方 Top Countries 标准即此用法。
+ * 用 count 计请求数、sum.edgeResponseBytes 计流量，按 clientCountryName
+ * 维度 + orderBy count_DESC 拿 Top N。
  */
 export async function zoneTopCountries(
   zoneId: string,
-  since: string,
+  _since: string,
   until: string,
   limit = 8,
 ): Promise<ZoneCountryResult> {
+  // 裁到最近 24h，规避 AdaptiveGroups 免费 zone 时间范围 ≤1d 限制
+  const end = new Date(until)
+  const start = new Date(end.getTime() - 24 * 60 * 60 * 1000)
+  const startIso = start.toISOString()
+  const endIso = end.toISOString()
+
   const query = `{
   viewer {
     zones(filter: {zoneTag: ${JSON.stringify(zoneId)}}) {
       httpRequestsAdaptiveGroups(
         limit: ${limit}
-        filter: {datetime_gt: ${JSON.stringify(since)}, datetime_lt: ${JSON.stringify(until)}}
+        filter: {datetime_gt: ${JSON.stringify(startIso)}, datetime_lt: ${JSON.stringify(endIso)}}
         orderBy: [count_DESC]
       ) {
         count

@@ -162,6 +162,24 @@ function cssVar(name: string, fallback: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
 }
 
+/** 给 oklch/rgb 颜色加 alpha（ECharts 不支持 oklch 拼字符串 alpha，需用 / 语法或 rgba）。
+ *  仅支持 oklch(...) 形式，转成带 alpha 的 oklch；其他原样返回。 */
+function withAlpha(color: string, alpha: number): string {
+  const m = color.match(/^oklch\(([^)]*)\)$/i)
+  if (m) return `oklch(${m[1]} / ${alpha})`
+  // 形如 rgb(1 2 3) 或 #hex
+  if (color.startsWith('#')) {
+    const hex = color.slice(1)
+    if (hex.length === 6) {
+      const r = parseInt(hex.slice(0, 2), 16)
+      const g = parseInt(hex.slice(2, 4), 16)
+      const b = parseInt(hex.slice(4, 6), 16)
+      return `rgba(${r},${g},${b},${alpha})`
+    }
+  }
+  return color
+}
+
 function fmtAxis(n: number): string {
   if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`
@@ -172,7 +190,6 @@ function fmtAxis(n: number): string {
 /** 请求趋势图：双轴面积/折线（请求 + 流量），暗色适配 */
 const trendOption = computed(() => {
   const colorPrimary = cssVar('--chart-1', '#5b8ff9')
-  const colorSecondary = cssVar('--chart-2', '#5ad8a6')
   const colorMuted = cssVar('--muted-foreground', '#999')
   const colorBorder = cssVar('--border', '#eee')
   return {
@@ -225,8 +242,8 @@ const trendOption = computed(() => {
             type: 'linear',
             x: 0, y: 0, x2: 0, y2: 1,
             colorStops: [
-              { offset: 0, color: colorSecondary + '66' },
-              { offset: 1, color: colorSecondary + '00' },
+              { offset: 0, color: withAlpha(colorPrimary, 0.4) },
+              { offset: 1, color: withAlpha(colorPrimary, 0) },
             ],
           },
         },
@@ -433,9 +450,12 @@ const countryOption = computed(() => {
           <div class="flex items-center justify-between">
             <CardTitle class="text-base">流量来源 · Top 国家</CardTitle>
             <Badge v-if="countries.length" variant="secondary">
-              {{ countries.length }} 个国家
+              {{ countries.length }} 个国家 · 最近 24h
             </Badge>
           </div>
+          <p class="text-xs text-muted-foreground">
+            国家分布走 Adaptive 明细集，免费 zone 时间范围上限 1 天，故仅取最近 24 小时
+          </p>
         </CardHeader>
         <CardContent>
           <VChart
