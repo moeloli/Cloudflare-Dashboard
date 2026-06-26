@@ -240,8 +240,9 @@ const trendOption = computed(() => {
         data: points.value.map((p) => ({ value: p.requests, ...p })),
         lineStyle: { color: colorPrimary, width: 2 },
         itemStyle: { color: colorPrimary },
-        // 禁用 emphasis 聚焦淡出（showSymbol:false hover 点消失已知 bug）
-        emphasis: { focus: 'none' },
+        // 彻底禁用 emphasis 态（showSymbol:false hover 点消失为 ECharts 已知 bug，
+        // emphasis.disabled 是未文档化但官方确认有效的 workaround，见 apache/echarts#19766）
+        emphasis: { disabled: true },
         areaStyle: {
           color: {
             type: 'linear',
@@ -302,7 +303,7 @@ const countryOption = computed(() => {
           color: colorPrimary,
           borderRadius: [0, 4, 4, 0],
         },
-        emphasis: { focus: 'none' },
+        emphasis: { disabled: true },
         barMaxWidth: 18,
       },
     ],
