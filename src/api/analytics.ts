@@ -101,8 +101,13 @@ interface Zone1hResp {
 interface Zone1dResp {
   viewer: { zones: { httpRequests1dGroups: Raw1dGroup[] }[] }
 }
-interface ZoneCountryResp {
-  viewer: { zones: { httpRequests1dGroups: Raw1dGroup[] }[] }
+interface AdaptiveGroup {
+  count?: number
+  sum?: { edgeResponseBytes?: number }
+  dimensions?: { clientCountryName?: string }
+}
+interface ZoneCountryAdaptiveResp {
+  viewer: { zones: { httpRequestsAdaptiveGroups: AdaptiveGroup[] }[] }
 }
 interface AccountWorkerResp {
   viewer: { accounts: { workersInvocationsAdaptive: RawWorkerGroup[] }[] }
@@ -324,7 +329,13 @@ export async function zoneSummary(
 
 /**
  * 按 clientCountryName 聚合 Top N 国家。
- * 通过 orderBy sum_requests_DESC + limit 拿到最高请求数的分组。
+ *
+ * 注意：clientCountryName 维度只在 httpRequestsAdaptiveGroups（按需查询的明细集）
+ * 中存在，1dGroups/1hGroups rollup 集不提供国家维度。因此国家分布必须走
+ * AdaptiveGroups：用 count 计请求数、sum.edgeResponseBytes 计流量，按
+ * clientCountryName 维度 + orderBy count_DESC 拿 Top N。
+ *
+ * Adaptive 集对免费 zone 有采样，但官方 Top Countries 标准即此用法。
  */
 export async function zoneTopCountries(
   zoneId: string,
@@ -335,14 +346,14 @@ export async function zoneTopCountries(
   const query = `{
   viewer {
     zones(filter: {zoneTag: ${JSON.stringify(zoneId)}}) {
-      httpRequests1dGroups(
-        limit: 1000
-        filter: {date_geq: ${JSON.stringify(toDateOnly(since))}, date_lt: ${JSON.stringify(toDateOnly(until))}}
-        orderBy: [sum_requests_DESC]
+      httpRequestsAdaptiveGroups(
+        limit: ${limit}
+        filter: {datetime_gt: ${JSON.stringify(since)}, datetime_lt: ${JSON.stringify(until)}}
+        orderBy: [count_DESC]
       ) {
+        count
         sum {
-          requests
-          bytes
+          edgeResponseBytes
         }
         dimensions {
           clientCountryName
@@ -351,26 +362,22 @@ export async function zoneTopCountries(
     }
   }
 }`
-  const data = await graphql<ZoneCountryResp>(query)
-  const groups = data.viewer.zones?.[0]?.httpRequests1dGroups ?? []
+  const data = await graphql<ZoneCountryAdaptiveResp>(query)
+  const groups = data.viewer.zones?.[0]?.httpRequestsAdaptiveGroups ?? []
   let total = 0
-  const rows: CountryRow[] = []
-  for (const g of groups) {
-    const country = g.dimensions?.clientCountryName ?? 'Unknown'
-    if (!country) continue
-    const req = g.sum?.requests ?? 0
-    total += req
-    rows.push({ country, requests: req, bytes: g.sum?.bytes ?? 0 })
-  }
-  // 二次排序去重（GraphQL 可能返回重复国家分组）
   const merged = new Map<string, CountryRow>()
-  for (const r of rows) {
-    const cur = merged.get(r.country)
+  for (const g of groups) {
+    const country = g.dimensions?.clientCountryName
+    if (!country) continue
+    const req = g.count ?? 0
+    total += req
+    const bytes = g.sum?.edgeResponseBytes ?? 0
+    const cur = merged.get(country)
     if (cur) {
-      cur.requests += r.requests
-      cur.bytes += r.bytes
+      cur.requests += req
+      cur.bytes += bytes
     } else {
-      merged.set(r.country, { ...r })
+      merged.set(country, { country, requests: req, bytes })
     }
   }
   return {
