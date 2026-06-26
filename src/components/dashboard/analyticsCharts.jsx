@@ -109,7 +109,7 @@ export function TrendChart({ points, loading, hasData }) {
     { className: 'h-64 w-full' },
     h(
       ResponsiveContainer,
-      { width: '100%', height: '100%' },
+      { width: '100%', height: 256 },
       h(
         AreaChart,
         { data: points, margin: { top: 8, right: 8, left: 0, bottom: 0 } },
@@ -183,7 +183,7 @@ export function CountryChart({ countries, loading }) {
     { className: 'h-72 w-full' },
     h(
       ResponsiveContainer,
-      { width: '100%', height: '100%' },
+      { width: '100%', height: 288 },
       h(
         BarChart,
         {

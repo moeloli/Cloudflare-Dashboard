@@ -314,8 +314,8 @@ onBeforeUnmount(() => {
           </div>
         </CardHeader>
         <CardContent>
-          <!-- React 图表挂载点；加载/空状态由 React 组件内部处理 -->
-          <div ref="trendHost" class="w-full"></div>
+          <!-- React 图表挂载点；host 给固定高度，避免 ResponsiveContainer 初次探测为 0 不渲染 -->
+          <div ref="trendHost" class="h-64 w-full"></div>
         </CardContent>
       </Card>
 
@@ -330,7 +330,7 @@ onBeforeUnmount(() => {
           </div>
         </CardHeader>
         <CardContent>
-          <div ref="countryHost" class="w-full"></div>
+          <div ref="countryHost" class="h-72 w-full"></div>
         </CardContent>
       </Card>
     </template>
