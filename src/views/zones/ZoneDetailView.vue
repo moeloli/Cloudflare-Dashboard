@@ -140,9 +140,6 @@ async function toggleDevMode(on: boolean) {
 /* ---------------- 配置预设 ---------------- */
 
 const presetsStore = usePresetsStore()
-const allPresets = computed(() => presetsStore.allPresets)
-const selectedPresetId = ref<string>(allPresets.value[0]?.id ?? '')
-const selectedPreset = computed(() => allPresets.value.find((p) => p.id === selectedPresetId.value))
 
 const applyingPresetId = ref<string | null>(null)
 
@@ -171,6 +168,32 @@ async function loadZoneSettings() {
 function currentValue(id: string): SettingValue | undefined {
   return zoneSettings.value[id]?.value
 }
+
+/** 「当前」虚拟预设 id：代表当前网站实际配置，只读不可改名/删除/编辑 */
+const CURRENT_PRESET_ID = 'current'
+const currentPreset = computed<OptimizationPreset>(() => {
+  const settings: Record<string, SettingValue> = {}
+  for (const def of SETTING_DEFS) {
+    const v = currentValue(def.id)
+    if (v !== undefined && v !== null && v !== '') settings[def.id] = v
+  }
+  return {
+    id: CURRENT_PRESET_ID,
+    name: '当前',
+    builtin: true,
+    description: '当前网站的实际配置',
+    settings,
+  }
+})
+
+/** 全部预设：「当前」（只读）+ 用户预设 */
+const allPresets = computed<OptimizationPreset[]>(() => [
+  currentPreset.value,
+  ...presetsStore.allPresets,
+])
+const selectedPresetId = ref<string>(CURRENT_PRESET_ID)
+const selectedPreset = computed(() => allPresets.value.find((p) => p.id === selectedPresetId.value))
+const isSelectedCurrent = computed(() => selectedPresetId.value === CURRENT_PRESET_ID)
 
 async function applyPreset(preset: OptimizationPreset) {
   const count = Object.keys(preset.settings).length
@@ -624,7 +647,11 @@ function fmtDate(s: string | null): string {
                     </SelectItem>
                   </SelectContent>
                 </Select>
-                <Button :disabled="!selectedPreset || !!applyingPresetId" @click="selectedPreset && applyPreset(selectedPreset)">
+                <Button
+                  :disabled="!selectedPreset || !!applyingPresetId || isSelectedCurrent"
+                  :title="isSelectedCurrent ? '当前配置即为网站现有设置，无需应用' : '批量应用该预设'"
+                  @click="selectedPreset && applyPreset(selectedPreset)"
+                >
                   <Loader2 v-if="applyingPresetId === selectedPresetId" class="size-4 animate-spin" />
                   <component :is="ShieldCheck" v-else class="size-4" />
                   应用
@@ -633,7 +660,7 @@ function fmtDate(s: string | null): string {
                   <Copy class="size-3.5" />
                   另存为
                 </Button>
-                <Button v-if="selectedPreset" variant="outline" size="sm" :title="selectedPreset.builtin ? '另存为副本并编辑' : '编辑预设'" @click="selectedPreset && openEditor(selectedPreset)">
+                <Button v-if="selectedPreset && !isSelectedCurrent" variant="outline" size="sm" title="编辑预设" @click="selectedPreset && openEditor(selectedPreset)">
                   <Pencil class="size-3.5" />
                 </Button>
                 <Button v-if="selectedPreset && !selectedPreset.builtin" variant="ghost" size="sm" class="text-destructive hover:text-destructive" title="删除预设" @click="selectedPreset && deletePreset(selectedPreset)">

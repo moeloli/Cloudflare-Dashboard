@@ -1,13 +1,12 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
-import { BUILTIN_PRESETS, type OptimizationPreset } from '@/api'
+import { type OptimizationPreset } from '@/api'
 
 /**
  * 配置预设持久化 store。
  *
- * 内置预设（速度优先 / 安全优先）只读，每次从 BUILTIN_PRESETS 重新取（保证不被污染）；
  * 用户预设明文存 localStorage（非敏感数据，不套加密，KISS）。
- * 合并后对外暴露 allPresets：内置 + 用户。
+ * 对外暴露 allPresets：仅用户预设（视图层按需注入「当前」等虚拟只读项）。
  *
  * localStorage key：cf_optimization_presets（仅存用户预设数组）。
  */
@@ -36,11 +35,8 @@ function loadUserPresets(): OptimizationPreset[] {
 export const usePresetsStore = defineStore('presets', () => {
   const userPresets = ref<OptimizationPreset[]>(loadUserPresets())
 
-  /** 全部预设：内置（只读）+ 用户（可改） */
-  const allPresets = computed<OptimizationPreset[]>(() => [
-    ...BUILTIN_PRESETS,
-    ...userPresets.value,
-  ])
+  /** 全部用户预设（可改可删） */
+  const allPresets = computed<OptimizationPreset[]>(() => [...userPresets.value])
 
   // 用户预设变更即持久化
   watch(

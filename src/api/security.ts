@@ -376,52 +376,6 @@ export interface OptimizationPreset {
   settings: Record<string, SettingValue>
 }
 
-/** 内置「速度优先」预设（只读种子） */
-export const SPEED_PRESET: OptimizationPreset = {
-  id: 'builtin:speed',
-  name: '速度优先',
-  builtin: true,
-  description: '激进缓存 + 全面压缩，最大化访问速度',
-  warning:
-    'SSL 设为「灵活」模式时 CF→源站为明文回源，仅适合源站不支持 HTTPS 的场景；源站支持 HTTPS 建议改用「完全」或「完全(严格)」',
-  settings: {
-    security_level: 'low',
-    ssl: 'flexible',
-    cache_level: 'aggressive',
-    browser_cache_ttl: 31536000,
-    polish: 'lossless',
-    minify: { html: 'on', css: 'on', js: 'on' },
-    brotli: 'on',
-    early_hints: 'on',
-    http3: 'on',
-  },
-}
-
-/** 内置「安全优先」预设（只读种子） */
-export const SECURITY_PRESET: OptimizationPreset = {
-  id: 'builtin:security',
-  name: '安全优先',
-  builtin: true,
-  description: '严格 TLS + 强制 HTTPS + 防护加固，牺牲部分速度换安全',
-  settings: {
-    security_level: 'high',
-    ssl: 'strict',
-    always_use_https: 'on',
-    automatic_https_rewrites: 'on',
-    tls_1_3: 'on',
-    opportunistic_encryption: 'on',
-    min_tls_version: '1.2',
-    cache_level: 'basic',
-    browser_cache_ttl: 14400,
-    challenge_ttl: 1800,
-    browser_check: 'on',
-    hotlink_protection: 'on',
-  },
-}
-
-/** 全部内置预设（用户预设由 stores/presets.ts 持久化合并） */
-export const BUILTIN_PRESETS: OptimizationPreset[] = [SPEED_PRESET, SECURITY_PRESET]
-
 /** 单项应用结果 */
 export interface PresetItemResult {
   id: string
