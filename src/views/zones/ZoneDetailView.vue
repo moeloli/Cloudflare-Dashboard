@@ -78,6 +78,7 @@ import {
 } from '@/api'
 import { usePresetsStore } from '@/stores/presets'
 import DNSRecordManager from '@/components/dns/DNSRecordManager.vue'
+import ZoneSecurityRules from '@/components/zones/ZoneSecurityRules.vue'
 import type { Zone } from '@/types/cloudflare'
 
 const route = useRoute()
@@ -547,6 +548,7 @@ function fmtDate(s: string | null): string {
         <TabsTrigger value="dns">DNS 记录</TabsTrigger>
         <TabsTrigger value="cache">缓存</TabsTrigger>
         <TabsTrigger value="preset">配置预设</TabsTrigger>
+        <TabsTrigger value="security">安全规则</TabsTrigger>
         <TabsTrigger value="overview">概览</TabsTrigger>
       </TabsList>
 
@@ -760,6 +762,11 @@ function fmtDate(s: string | null): string {
             </CardContent>
           </Card>
         </div>
+      </TabsContent>
+
+      <!-- 安全规则 -->
+      <TabsContent value="security" class="mt-4">
+        <ZoneSecurityRules :zone-id="zoneId" />
       </TabsContent>
 
       <!-- 预设编辑器 -->

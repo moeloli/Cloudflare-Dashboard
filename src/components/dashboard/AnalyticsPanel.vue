@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { createElement } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
 import {
   BarChart3,
@@ -17,7 +19,7 @@ import type { CountryRow, TimePoint, ZoneSummary } from '@/api/analytics'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { Button } from '@/components/ui/button'
 import {
   Select,
   SelectContent,
@@ -25,6 +27,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+// recharts 图表（React 实现，见 analyticsCharts.jsx）
+import { TrendChart, CountryChart } from './analyticsCharts'
 
 /* ---------- 控件状态 ---------- */
 
@@ -59,10 +63,6 @@ const loading = ref(false)
 const errorMsg = ref('')
 
 const hasData = computed(() => points.value.length > 0)
-
-const maxRequest = computed(() =>
-  points.value.reduce((m, p) => Math.max(m, p.requests), 0),
-)
 
 const totalRequestsTrend = computed(() =>
   points.value.reduce((s, p) => s + p.requests, 0),
@@ -108,6 +108,7 @@ async function loadAnalytics() {
 }
 
 onMounted(async () => {
+  mountReact()
   await loadZones()
   if (selectedZoneId.value) await loadAnalytics()
 })
@@ -123,7 +124,6 @@ function fmtNum(n: number | undefined | null): string {
   if (n === undefined || n === null || Number.isNaN(n)) return '0'
   return nf.format(n)
 }
-
 function fmtBytes(n: number): string {
   if (!n) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
@@ -135,14 +135,8 @@ function fmtBytes(n: number): string {
   }
   return `${v.toFixed(v < 10 ? 2 : 1)} ${units[i]}`
 }
-
 function pct(rate: number): string {
   return `${(rate * 100).toFixed(1)}%`
-}
-
-function barHeight(p: TimePoint): string {
-  if (maxRequest.value <= 0) return '0%'
-  return `${Math.max(2, (p.requests / maxRequest.value) * 100)}%`
 }
 
 const summaryCards = computed(() => {
@@ -152,17 +146,56 @@ const summaryCards = computed(() => {
     { label: '页面浏览', value: s ? fmtNum(s.pageViews) : '0', icon: Eye, hint: 'PageViews' },
     { label: '唯一访客', value: s ? fmtNum(s.uniqueVisitors) : '0', icon: Users, hint: 'Uniques' },
     { label: '威胁拦截', value: s ? fmtNum(s.threats) : '0', icon: ShieldAlert, hint: 'Threats' },
-    { label: '缓存命中率', value: s ? pct(s.cacheHitRate) : '0%', icon: Gauge, hint: fmtBytes(s?.cachedBytes ?? 0) },
+    {
+      label: '缓存命中率',
+      value: s ? pct(s.cacheHitRate) : '0%',
+      icon: Gauge,
+      hint: fmtBytes(s?.cachedBytes ?? 0),
+    },
   ]
 })
 
-const countryTotal = computed(() =>
-  countries.value.reduce((m, c) => m + c.requests, 0),
-)
-function countryPct(c: CountryRow): number {
-  if (countryTotal.value <= 0) return 0
-  return (c.requests / countryTotal.value) * 100
+/* ---------- React 图表挂载 ---------- */
+
+const trendHost = ref<HTMLDivElement>()
+const countryHost = ref<HTMLDivElement>()
+let trendRoot: Root | null = null
+let countryRoot: Root | null = null
+
+function renderTrend() {
+  trendRoot?.render(
+    createElement(TrendChart, {
+      points: points.value,
+      loading: loading.value,
+      hasData: hasData.value,
+    }),
+  )
 }
+function renderCountry() {
+  countryRoot?.render(
+    createElement(CountryChart, {
+      countries: countries.value,
+      loading: loading.value,
+    }),
+  )
+}
+
+function mountReact() {
+  if (trendHost.value && !trendRoot) trendRoot = createRoot(trendHost.value)
+  if (countryHost.value && !countryRoot) countryRoot = createRoot(countryHost.value)
+  renderTrend()
+  renderCountry()
+}
+
+watch([points, loading, hasData], renderTrend, { flush: 'post' })
+watch([countries, loading], renderCountry, { flush: 'post' })
+
+onBeforeUnmount(() => {
+  trendRoot?.unmount()
+  countryRoot?.unmount()
+  trendRoot = null
+  countryRoot = null
+})
 </script>
 
 <template>
@@ -174,7 +207,7 @@ function countryPct(c: CountryRow): number {
           <BarChart3 class="size-5" />
         </div>
         <div>
-          <h1 class="text-xl font-semibold tracking-tight">分析统计</h1>
+          <h2 class="text-lg font-semibold tracking-tight">分析统计</h2>
           <p class="text-sm text-muted-foreground">
             Cloudflare GraphQL Analytics · 基于 zone 维度的 HTTP 请求分析
           </p>
@@ -204,14 +237,16 @@ function countryPct(c: CountryRow): number {
           </SelectContent>
         </Select>
 
-        <button
-          class="inline-flex size-9 items-center justify-center rounded-md border bg-card text-muted-foreground transition hover:bg-muted disabled:opacity-50"
+        <Button
+          variant="ghost"
+          size="sm"
           :disabled="loading || !selectedZoneId"
-          title="刷新"
+          class="ml-auto"
           @click="loadAnalytics"
         >
           <RefreshCw class="size-4" :class="{ 'animate-spin': loading }" />
-        </button>
+          刷新
+        </Button>
       </div>
     </div>
 
@@ -268,7 +303,7 @@ function countryPct(c: CountryRow): number {
         </CardContent>
       </Card>
 
-      <!-- 请求趋势柱状图 -->
+      <!-- 请求趋势图（recharts） -->
       <Card>
         <CardHeader class="pb-2">
           <div class="flex items-center justify-between">
@@ -279,59 +314,12 @@ function countryPct(c: CountryRow): number {
           </div>
         </CardHeader>
         <CardContent>
-          <!-- 加载骨架 -->
-          <div v-if="loading" class="flex h-48 items-end gap-1">
-            <Skeleton
-              v-for="i in 20"
-              :key="i"
-              class="flex-1"
-              :style="{ height: `${20 + Math.random() * 60}%` }"
-            />
-          </div>
-
-          <!-- 空状态 -->
-          <div
-            v-else-if="!hasData"
-            class="flex h-48 flex-col items-center justify-center gap-2 text-sm text-muted-foreground"
-          >
-            <BarChart3 class="size-8 opacity-40" />
-            <p>该时间范围内没有请求数据</p>
-            <p class="text-xs">尝试切换其他域名或扩大时间范围</p>
-          </div>
-
-          <!-- 柱状图 -->
-          <ScrollArea v-else class="w-full">
-            <div class="flex h-48 min-w-full items-end gap-px pb-2">
-              <div
-                v-for="p in points"
-                :key="p.ts"
-                class="group relative flex-1"
-                style="min-width: 3px"
-              >
-                <div
-                  class="w-full rounded-t-sm bg-primary/70 transition group-hover:bg-primary"
-                  :style="{ height: barHeight(p) }"
-                />
-                <!-- tooltip -->
-                <div
-                  class="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 hidden -translate-x-1/2 whitespace-nowrap rounded-md border bg-popover px-2 py-1 text-xs shadow-md group-hover:block"
-                >
-                  <div class="font-medium">{{ p.label }}</div>
-                  <div class="text-muted-foreground">请求 {{ fmtNum(p.requests) }}</div>
-                  <div class="text-muted-foreground">流量 {{ fmtBytes(p.bytes) }}</div>
-                  <div class="text-muted-foreground">威胁 {{ fmtNum(p.threats) }}</div>
-                </div>
-              </div>
-            </div>
-            <div class="flex items-center justify-between border-t pt-2 text-xs text-muted-foreground">
-              <span>{{ points[0]?.label }}</span>
-              <span>{{ points[points.length - 1]?.label }}</span>
-            </div>
-          </ScrollArea>
+          <!-- React 图表挂载点；加载/空状态由 React 组件内部处理 -->
+          <div ref="trendHost" class="w-full"></div>
         </CardContent>
       </Card>
 
-      <!-- 流量来源 / 国家 -->
+      <!-- 流量来源 / 国家（recharts） -->
       <Card>
         <CardHeader class="pb-2">
           <div class="flex items-center justify-between">
@@ -342,39 +330,7 @@ function countryPct(c: CountryRow): number {
           </div>
         </CardHeader>
         <CardContent>
-          <div v-if="loading" class="space-y-3">
-            <Skeleton v-for="i in 5" :key="i" class="h-8 rounded" />
-          </div>
-          <div
-            v-else-if="!countries.length"
-            class="flex h-32 flex-col items-center justify-center gap-2 text-sm text-muted-foreground"
-          >
-            <Globe class="size-8 opacity-40" />
-            <p>暂无国家分布数据</p>
-          </div>
-          <ul v-else class="space-y-2">
-            <li
-              v-for="c in countries"
-              :key="c.country"
-              class="flex items-center gap-3"
-            >
-              <span class="w-28 shrink-0 truncate text-sm" :title="c.country">
-                {{ c.country || 'Unknown' }}
-              </span>
-              <div class="h-2 flex-1 overflow-hidden rounded-full bg-muted">
-                <div
-                  class="h-full rounded-full bg-primary/70"
-                  :style="{ width: `${Math.max(2, countryPct(c))}%` }"
-                />
-              </div>
-              <span class="w-20 shrink-0 text-right text-xs text-muted-foreground">
-                {{ fmtNum(c.requests) }}
-              </span>
-              <span class="w-12 shrink-0 text-right text-xs text-muted-foreground">
-                {{ countryPct(c).toFixed(1) }}%
-              </span>
-            </li>
-          </ul>
+          <div ref="countryHost" class="w-full"></div>
         </CardContent>
       </Card>
     </template>

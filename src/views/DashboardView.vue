@@ -6,6 +6,7 @@ import { Globe, Zap, Server, Activity, ArrowRight, Cloud } from '@lucide/vue'
 import { useAuthStore } from '@/stores/auth'
 import { zonesApi } from '@/api'
 import type { Zone } from '@/types/cloudflare'
+import AnalyticsPanel from '@/components/dashboard/AnalyticsPanel.vue'
 
 const auth = useAuthStore()
 const zones = ref<Zone[]>([])
@@ -89,5 +90,8 @@ const stats = [
         </li>
       </ul>
     </div>
+
+    <!-- 分析统计（合并自原独立分析页，recharts 图表） -->
+    <AnalyticsPanel />
   </div>
 </template>

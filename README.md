@@ -8,9 +8,9 @@
 
 | 分组 | 模块 | 能力 |
 |---|---|---|
-| 概览 | 概览 | 账号信息、域名数、快捷入口 |
+| 概览 | 概览 | 账号信息、域名数、快捷入口、**分析统计**（GraphQL Analytics + recharts 请求趋势/Top 国家） |
 | 域名与加速 | 域名管理 | Zone 列表、添加域名（含 NS 提示）、删除 |
-| | 域名详情 | NS/plan、缓存清除、开发模式、概览 |
+| | 域名详情 | NS/plan、DNS 记录、缓存清除/开发模式、配置预设、**安全规则**（边缘证书/WAF/IP 访问规则/Page Rules）、概览 |
 | | DNS 记录 | CRUD、A/AAAA/CNAME/TXT/MX/NS 等、多 IP 拆分、小黄云代理、批量 JSON 导入 |
 | | **一键加速** | 向导式部署 Worker + CNAME、已加速域名识别与管理 |
 | | **SaaS优选** | Cloudflare for SaaS、custom hostname 接入、回退源、访问域名加速 |
@@ -20,10 +20,6 @@
 | 存储 | R2 存储 | Bucket 管理、对象上传/下载/删除 |
 | 部署 | Pages | 项目列表、部署记录 |
 | Zero Trust | Tunnel | 列表、创建（含 token）、连接查看、ingress 规则可视化编辑（端口路由） |
-| 安全 | SSL/证书 | SSL 模式、Always HTTPS、TLS 1.3、边缘证书 |
-| | WAF/防火墙 | WAF 规则集、IP 访问规则 |
-| | 缓存规则 | 清缓存、开发模式、Page Rules |
-| 分析 | 分析统计 | GraphQL Analytics、请求趋势、Top 国家（纯 Tailwind 柱状图，无图表库） |
 | 工具 | 工具箱 | CF IP 列表、DNS 查询、HTTP 头检测、UUID/Base64/时间戳转换 |
 | | 设置 | 多账号管理、凭据安全说明、主题、关于 |
 
