@@ -6,7 +6,6 @@ import {
   ArrowLeft,
   RefreshCw,
   Copy,
-  ExternalLink,
   Trash2,
   Loader2,
   Cloud,
@@ -20,7 +19,6 @@ import {
 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -466,9 +464,8 @@ function fmtDate(s: string | null): string {
             </div>
           </div>
           <div class="flex items-center gap-2">
-            <Button variant="outline" size="sm" :disabled="loading" @click="load">
+            <Button variant="ghost" size="icon" :disabled="loading" title="刷新域名信息" @click="load">
               <RefreshCw class="size-4" :class="{ 'animate-spin': loading }" />
-              刷新
             </Button>
             <Button variant="outline" size="sm" class="text-destructive hover:text-destructive" @click="deleteOpen = true">
               <Trash2 class="size-4" />
@@ -477,51 +474,6 @@ function fmtDate(s: string | null): string {
           </div>
         </div>
       </CardHeader>
-      <CardContent v-if="loading && !zone">
-        <div class="space-y-2">
-          <Skeleton class="h-4 w-full" />
-          <Skeleton class="h-4 w-3/4" />
-        </div>
-      </CardContent>
-      <CardContent v-else-if="zone">
-        <div class="grid gap-4 md:grid-cols-2">
-          <!-- Cloudflare 名称服务器 -->
-          <div class="space-y-2 rounded-lg border p-4">
-            <div class="flex items-center gap-2 text-sm font-medium">
-              <Cloud class="size-4 text-primary" />
-              Cloudflare 名称服务器
-            </div>
-            <ul class="space-y-1.5">
-              <li v-for="ns in zone.name_servers" :key="ns" class="flex items-center justify-between gap-2 text-sm">
-                <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{{ ns }}</code>
-                <Button variant="ghost" size="icon-sm" @click="copy(ns, 'NS')">
-                  <Copy class="size-3" />
-                </Button>
-              </li>
-            </ul>
-            <p class="text-xs text-muted-foreground">
-              请到域名注册商将 NS 改为上述名称服务器
-            </p>
-          </div>
-
-          <!-- 原始名称服务器 -->
-          <div class="space-y-2 rounded-lg border p-4">
-            <div class="flex items-center gap-2 text-sm font-medium">
-              <ExternalLink class="size-4 text-muted-foreground" />
-              原始名称服务器
-            </div>
-            <ul v-if="zone.original_name_servers?.length" class="space-y-1.5">
-              <li v-for="ns in zone.original_name_servers" :key="ns" class="text-sm">
-                <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{{ ns }}</code>
-              </li>
-            </ul>
-            <p v-else class="text-sm text-muted-foreground">无（可能已完全迁移）</p>
-            <p v-if="zone.original_registrar" class="text-xs text-muted-foreground">
-              原注册商：{{ zone.original_registrar }}
-            </p>
-          </div>
-        </div>
-      </CardContent>
     </Card>
 
     <!-- Tabs -->
@@ -614,9 +566,8 @@ function fmtDate(s: string | null): string {
                 </CardTitle>
                 <CardDescription>选择预设一键批量应用，或在下方逐项实时调节；自定义预设可改名、增删、全局保存</CardDescription>
               </div>
-              <Button variant="outline" size="sm" :disabled="settingsLoading" @click="loadZoneSettings">
+              <Button variant="ghost" size="icon" :disabled="settingsLoading" title="刷新当前配置值" @click="loadZoneSettings">
                 <RefreshCw class="size-4" :class="{ 'animate-spin': settingsLoading }" />
-                刷新当前值
               </Button>
             </CardHeader>
             <CardContent class="space-y-5">
@@ -873,12 +824,42 @@ function fmtDate(s: string | null): string {
 
             <Separator />
 
-            <div>
-              <div class="mb-2 text-sm font-medium">Cloudflare 名称服务器</div>
-              <div class="flex flex-wrap gap-1.5">
-                <code v-for="ns in zone.name_servers" :key="ns" class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
-                  {{ ns }}
-                </code>
+            <!-- 名称服务器（合并自原顶部信息卡） -->
+            <div class="grid gap-4 md:grid-cols-2">
+              <!-- Cloudflare 名称服务器 -->
+              <div class="space-y-2 rounded-lg border p-4">
+                <div class="flex items-center gap-2 text-sm font-medium">
+                  <Cloud class="size-4 text-primary" />
+                  Cloudflare 名称服务器
+                </div>
+                <ul class="space-y-1.5">
+                  <li v-for="ns in zone.name_servers" :key="ns" class="flex items-center justify-between gap-2 text-sm">
+                    <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{{ ns }}</code>
+                    <Button variant="ghost" size="icon-sm" @click="copy(ns, 'NS')">
+                      <Copy class="size-3" />
+                    </Button>
+                  </li>
+                </ul>
+                <p class="text-xs text-muted-foreground">
+                  请到域名注册商将 NS 改为上述名称服务器
+                </p>
+              </div>
+
+              <!-- 原始名称服务器 -->
+              <div class="space-y-2 rounded-lg border p-4">
+                <div class="flex items-center gap-2 text-sm font-medium">
+                  <ArrowLeft class="size-4 text-muted-foreground" />
+                  原始名称服务器
+                </div>
+                <ul v-if="zone.original_name_servers?.length" class="space-y-1.5">
+                  <li v-for="ns in zone.original_name_servers" :key="ns" class="text-sm">
+                    <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{{ ns }}</code>
+                  </li>
+                </ul>
+                <p v-else class="text-sm text-muted-foreground">无（可能已完全迁移）</p>
+                <p v-if="zone.original_registrar" class="text-xs text-muted-foreground">
+                  原注册商：{{ zone.original_registrar }}
+                </p>
               </div>
             </div>
           </CardContent>
