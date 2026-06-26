@@ -330,6 +330,36 @@ export function getSettingDef(id: string): SettingDef | undefined {
   return SETTING_DEF_MAP[id]
 }
 
+/**
+ * 各 select / security_level 选项的中文文案（对齐 Cloudflare 仪表板官方中文）。
+ * 未命中映射时回退展示原始值。onoff 类统一在视图层处理（开启/关闭）。
+ */
+export const OPTION_LABELS: Record<string, Record<string, string>> = {
+  ssl: { off: '关闭', flexible: '灵活', full: '完全', strict: '完全（严格）' },
+  security_level: {
+    off: '关闭',
+    essentially_off: '基本关闭',
+    low: '低',
+    medium: '中',
+    high: '高',
+    under_attack: '正在遭受攻击',
+  },
+  cache_level: { off: '关闭', simplified: '简化', aggressive: '标准', basic: '基本' },
+  polish: { off: '关闭', lossless: '无损', lossy: '有损' },
+  tls_1_3: { on: '开启', off: '关闭', zrt: '零往返时间恢复 (0-RTT)' },
+  min_tls_version: { '1.0': 'TLS 1.0', '1.1': 'TLS 1.1', '1.2': 'TLS 1.2', '1.3': 'TLS 1.3' },
+}
+
+/** 取某 select 项某值的中文文案，无映射回退原值 */
+export function optionLabel(defId: string, value: string): string {
+  return OPTION_LABELS[defId]?.[value] ?? value
+}
+
+/** onoff 类中文文案 */
+export function onoffLabel(value: unknown): string {
+  return value === 'on' ? '开启' : '关闭'
+}
+
 /** 一个配置预设方案（用户可编辑、可持久化） */
 export interface OptimizationPreset {
   /** 预设唯一 id：内置用 'builtin:speed'/'builtin:security'；用户预设用 'user_xxx' */

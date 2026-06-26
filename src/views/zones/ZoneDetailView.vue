@@ -14,9 +14,6 @@ import {
   ShieldCheck,
   Zap,
   Rocket,
-  CheckCircle2,
-  XCircle,
-  Circle,
   Plus,
   Pencil,
   SlidersHorizontal,
@@ -73,8 +70,9 @@ import {
   listZoneSettings,
   SETTING_DEFS,
   getSettingDef,
+  optionLabel,
+  onoffLabel,
   type OptimizationPreset,
-  type PresetItemResult,
   type ZoneSettingItem,
   type SettingDef,
   type SettingValue,
@@ -145,9 +143,9 @@ async function toggleDevMode(on: boolean) {
 
 const presetsStore = usePresetsStore()
 const allPresets = computed(() => presetsStore.allPresets)
+const selectedPresetId = ref<string>(allPresets.value[0]?.id ?? '')
+const selectedPreset = computed(() => allPresets.value.find((p) => p.id === selectedPresetId.value))
 
-/** 应用预设时的逐项结果（key=presetId, value={settingId: result}） */
-const applyResults = ref<Record<string, Record<string, PresetItemResult>>>({})
 const applyingPresetId = ref<string | null>(null)
 
 /** 单项调节：当前 zone 各 setting 实际值 */
@@ -171,7 +169,7 @@ async function loadZoneSettings() {
   }
 }
 
-/** 取某 setting 当前值（未读到时回退到内置预设的默认，便于展示） */
+/** 取某 setting 当前值 */
 function currentValue(id: string): SettingValue | undefined {
   return zoneSettings.value[id]?.value
 }
@@ -181,16 +179,8 @@ async function applyPreset(preset: OptimizationPreset) {
   if (!confirm(`确认应用「${preset.name}」？\n\n将批量覆盖该域名 ${count} 项配置，此操作不可撤销。`))
     return
   applyingPresetId.value = preset.id
-  const fresh: Record<string, PresetItemResult> = {}
-  for (const id of Object.keys(preset.settings)) fresh[id] = { id, ok: false }
-  applyResults.value = { ...applyResults.value, [preset.id]: fresh }
   try {
-    const results = await applyOptimizationPreset(zoneId.value, preset, (r) => {
-      applyResults.value = {
-        ...applyResults.value,
-        [preset.id]: { ...applyResults.value[preset.id], [r.id]: r },
-      }
-    })
+    const results = await applyOptimizationPreset(zoneId.value, preset)
     const okCount = results.filter((r) => r.ok).length
     const failCount = results.length - okCount
     if (failCount === 0) {
@@ -311,20 +301,21 @@ function deletePreset(preset: OptimizationPreset) {
 
 /* ---------------- 展示辅助 ---------------- */
 
-/** 设置项的展示值（把 on/off / minify 对象转中文） */
+/** 设置项的展示值（中文文案，对齐 CF 仪表板） */
 function displayValue(def: SettingDef, value: SettingValue | undefined): string {
   if (value === undefined) return '—'
-  if (def.type === 'onoff') return value === 'on' ? '开' : '关'
+  if (def.type === 'onoff') return onoffLabel(value)
   if (def.type === 'minify' && typeof value === 'object' && value) {
     const m = value as MinifyValue
     const on: string[] = []
     if (m.html === 'on') on.push('HTML')
     if (m.css === 'on') on.push('CSS')
     if (m.js === 'on') on.push('JS')
-    return on.length ? on.join('+') : '关'
+    return on.length ? on.join('+') : '关闭'
   }
-  if (def.type === 'number' && (def.id === 'browser_cache_ttl' || def.id === 'challenge_ttl')) {
-    return fmtSeconds(Number(value))
+  if (def.type === 'number') return fmtSeconds(Number(value))
+  if (def.type === 'select' || def.type === 'security_level') {
+    return optionLabel(def.id, String(value))
   }
   return String(value)
 }
@@ -354,10 +345,6 @@ const SETTING_GROUPS: { key: SettingDef['group']; label: string }[] = [
   { key: 'cache', label: '缓存' },
   { key: 'speed', label: '速度优化' },
 ]
-/** 取某预设某项的应用结果（供模板渲染） */
-function presetResult(presetId: string, settingId: string): PresetItemResult | undefined {
-  return applyResults.value[presetId]?.[settingId]
-}
 
 /** 单项调节：minify 子项切换（html/css/js 各自 on/off） */
 function toggleMinify(defId: string, key: 'html' | 'css' | 'js') {
@@ -617,110 +604,15 @@ function fmtDate(s: string | null): string {
       <!-- 配置预设 -->
       <TabsContent value="preset" class="mt-4">
         <div class="space-y-6">
-          <!-- 说明 + 新建 -->
-          <div class="flex flex-wrap items-center justify-between gap-3">
-            <p class="text-sm text-muted-foreground">
-              预设是一组 zone 配置的批量方案：内置两套只读，可基于它们「另存为」自定义预设，自由改名改值，全局保存。
-            </p>
-            <Button size="sm" @click="openNewPreset">
-              <Plus class="size-4" />
-              新建预设
-            </Button>
-          </div>
-
-          <!-- 预设卡片 -->
-          <div class="grid gap-4 md:grid-cols-2">
-            <Card v-for="preset in allPresets" :key="preset.id">
-              <CardHeader>
-                <div class="flex items-start justify-between gap-2">
-                  <div class="min-w-0">
-                    <CardTitle class="flex items-center gap-2 text-base">
-                      <component
-                        :is="preset.id === 'builtin:speed' ? Rocket : ShieldCheck"
-                        class="size-4 shrink-0"
-                        :class="preset.id === 'builtin:speed' ? 'text-amber-500' : 'text-primary'"
-                      />
-                      <span class="truncate">{{ preset.name }}</span>
-                      <Badge v-if="preset.builtin" variant="outline" class="text-[10px]">内置</Badge>
-                    </CardTitle>
-                    <CardDescription v-if="preset.description" class="mt-1">{{ preset.description }}</CardDescription>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent class="space-y-3">
-                <Alert v-if="preset.warning" variant="destructive" class="py-2">
-                  <AlertDescription class="text-xs">{{ preset.warning }}</AlertDescription>
-                </Alert>
-                <ul class="space-y-1">
-                  <li
-                    v-for="(value, sid) in preset.settings"
-                    :key="sid"
-                    class="flex items-center justify-between gap-2 text-xs"
-                  >
-                    <span class="flex items-center gap-1.5 text-muted-foreground">
-                      <component
-                        :is="presetResult(preset.id, String(sid))?.ok ? CheckCircle2 : presetResult(preset.id, String(sid)) ? XCircle : Circle"
-                        class="size-3.5 shrink-0"
-                        :class="presetResult(preset.id, String(sid))?.ok ? 'text-emerald-500' : presetResult(preset.id, String(sid)) ? 'text-destructive' : 'text-muted-foreground/40'"
-                      />
-                      {{ getSettingDef(String(sid))?.label ?? sid }}
-                    </span>
-                    <span class="text-muted-foreground">{{ displayValue(getSettingDef(String(sid))!, value) }}</span>
-                  </li>
-                </ul>
-                <div class="flex flex-wrap gap-2 pt-1">
-                  <Button class="flex-1" :disabled="!!applyingPresetId" @click="applyPreset(preset)">
-                    <Loader2 v-if="applyingPresetId === preset.id" class="size-4 animate-spin" />
-                    <component
-                      :is="preset.id === 'builtin:speed' ? Rocket : ShieldCheck"
-                      v-else
-                      class="size-4"
-                    />
-                    应用
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    :disabled="!!applyingPresetId"
-                    title="复制为新预设"
-                    @click="duplicatePreset(preset)"
-                  >
-                    <Copy class="size-3.5" />
-                    另存为
-                  </Button>
-                  <Button
-                    v-if="!preset.builtin"
-                    variant="outline"
-                    size="sm"
-                    title="编辑预设"
-                    @click="openEditor(preset)"
-                  >
-                    <Pencil class="size-3.5" />
-                  </Button>
-                  <Button
-                    v-if="!preset.builtin"
-                    variant="ghost"
-                    size="sm"
-                    class="text-destructive hover:text-destructive"
-                    title="删除预设"
-                    @click="deletePreset(preset)"
-                  >
-                    <Trash2 class="size-3.5" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          <!-- 单项调节 -->
+          <!-- 单项调节（含预设快速应用） -->
           <Card>
             <CardHeader class="flex-row items-center justify-between space-y-0">
               <div>
                 <CardTitle class="flex items-center gap-2 text-base">
                   <SlidersHorizontal class="size-4 text-primary" />
-                  单项调节
+                  配置预设与单项调节
                 </CardTitle>
-                <CardDescription>实时读取当前值并单独修改，改一项立即生效</CardDescription>
+                <CardDescription>选择预设一键批量应用，或在下方逐项实时调节；自定义预设可改名、增删、全局保存</CardDescription>
               </div>
               <Button variant="outline" size="sm" :disabled="settingsLoading" @click="loadZoneSettings">
                 <RefreshCw class="size-4" :class="{ 'animate-spin': settingsLoading }" />
@@ -728,6 +620,48 @@ function fmtDate(s: string | null): string {
               </Button>
             </CardHeader>
             <CardContent class="space-y-5">
+              <!-- 快速应用预设 -->
+              <div class="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 p-3">
+                <div class="flex items-center gap-1.5 text-sm font-medium">
+                  <component :is="Rocket" class="size-4 text-amber-500" />
+                  应用预设
+                </div>
+                <Select v-model="selectedPresetId">
+                  <SelectTrigger class="h-9 w-56">
+                    <SelectValue placeholder="选择预设方案" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="p in allPresets" :key="p.id" :value="p.id">
+                      {{ p.name }}{{ p.builtin ? '（内置）' : '' }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button :disabled="!selectedPreset || !!applyingPresetId" @click="selectedPreset && applyPreset(selectedPreset)">
+                  <Loader2 v-if="applyingPresetId === selectedPresetId" class="size-4 animate-spin" />
+                  <component :is="ShieldCheck" v-else class="size-4" />
+                  应用
+                </Button>
+                <Button variant="outline" size="sm" :disabled="!selectedPreset" title="另存为新预设" @click="selectedPreset && duplicatePreset(selectedPreset)">
+                  <Copy class="size-3.5" />
+                  另存为
+                </Button>
+                <Button v-if="selectedPreset && !selectedPreset.builtin" variant="outline" size="sm" title="编辑预设" @click="selectedPreset && openEditor(selectedPreset)">
+                  <Pencil class="size-3.5" />
+                </Button>
+                <Button v-if="selectedPreset && !selectedPreset.builtin" variant="ghost" size="sm" class="text-destructive hover:text-destructive" title="删除预设" @click="selectedPreset && deletePreset(selectedPreset)">
+                  <Trash2 class="size-3.5" />
+                </Button>
+                <Button variant="ghost" size="sm" class="ml-auto" @click="openNewPreset">
+                  <Plus class="size-3.5" />
+                  新建
+                </Button>
+              </div>
+
+              <!-- 当前预设警告 + 逐项结果 -->
+              <Alert v-if="selectedPreset?.warning" variant="destructive" class="py-2">
+                <AlertDescription class="text-xs">{{ selectedPreset.warning }}</AlertDescription>
+              </Alert>
+
               <div v-for="g in SETTING_GROUPS" :key="g.key">
                 <div class="mb-2 text-xs font-medium text-muted-foreground">{{ g.label }}</div>
                 <div class="grid gap-2 sm:grid-cols-2">
@@ -763,7 +697,7 @@ function fmtDate(s: string | null): string {
                         <SelectValue placeholder="选择" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem v-for="o in def.options" :key="o" :value="o">{{ o }}</SelectItem>
+                        <SelectItem v-for="o in def.options" :key="o" :value="o">{{ optionLabel(def.id, o) }}</SelectItem>
                       </SelectContent>
                     </Select>
                     <!-- number（枚举秒数） -->
@@ -852,7 +786,7 @@ function fmtDate(s: string | null): string {
                       >
                         <SelectTrigger class="w-32"><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem v-for="o in def.options" :key="o" :value="o">{{ o }}</SelectItem>
+                          <SelectItem v-for="o in def.options" :key="o" :value="o">{{ optionLabel(def.id, o) }}</SelectItem>
                         </SelectContent>
                       </Select>
                       <Select
